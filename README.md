@@ -16,35 +16,42 @@ The script can be slow to get going, but it'll get there eventually. Getting acc
 
 nano start.js
 
-
 2. Paste the following content:
 
 ```javascript
 /** @param {NS} ns **/
 export async function main(ns) {
-if (ns.getHostname() !== "home") {
- throw new Error("Run the script from home");
+  if (ns.getHostname() !== "home") {
+    throw new Error("Run the script from home");
+  }
+
+  const repoBase = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src";
+  const file = "initHacking.js";
+  const url = `${repoBase}/${file}?ts=${Date.now()}`;
+
+  ns.tprint(`[start.js] Refreshing ${file}...`);
+
+  // 🔥 Force overwrite
+  if (ns.fileExists(file, "home")) {
+    ns.rm(file);
+  }
+
+  const ok = await ns.wget(url, file);
+
+  if (!ok || !ns.fileExists(file, "home")) {
+    ns.tprint(`[start.js] Failed to download ${file}`);
+    return;
+  }
+
+  ns.tprint(`[start.js] Launching ${file}...`);
+  ns.spawn(file, 1);
 }
-
-const repoBase = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src";
-const file = "initHacking.js";
-const url = `${repoBase}/${file}?ts=${Date.now()}`;
-
-ns.tprint(`[start.js] Downloading ${file} from your fork...`);
-
-const ok = await ns.wget(url, file);
-if (!ok || !ns.fileExists(file, "home")) {
- ns.tprint(`[start.js] Failed to download ${file}`);
- return;
-}
-
-ns.tprint(`[start.js] Launching ${file}...`);
-ns.spawn(file, 1);
-}
+```javascript
 
 Exit nano and run:
 
 run start.js
+
 Important Notes
 This fork uses ctoppan/bitburner as the source of truth instead of the original repository.
 All scripts (including mainHack.js) will be downloaded from this repo when you run start.js.
