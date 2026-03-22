@@ -20,6 +20,7 @@ const filesToDownload = [
   // management
   "killAll.js",
   "playerServers.js",
+  "stockTrader.js",
 
   // batch system
   "prepTarget.js",
@@ -82,5 +83,9 @@ export async function main(ns) {
   if (!ns.isRunning("playerServers.js", "home")) {
     ns.tprint(`[${localeHHMMSS()}] Starting playerServers.js`);
     ns.run("playerServers.js", 1);
+  }
+  if (ns.stock?.hasTIXAPIAccess?.() && !ns.isRunning("stockTrader.js", "home")) {
+	ns.tprint(`[${localeHHMMSS()}] Starting stockTrader.js`);
+	ns.run("stockTrader.js", 1);
   }
 }
