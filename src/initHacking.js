@@ -1,6 +1,6 @@
 const baseUrl = 'https://raw.githubusercontent.com/ctoppan/bitburner/master/src/'
 
-// 🔥 Toggle system here
+// Toggle which hacking system to run
 const USE_OVERLAP_BATCH = true
 
 const filesToDownload = [
@@ -43,7 +43,7 @@ export async function main(ns) {
     throw new Error('Run the script from home')
   }
 
-  // 🔽 Download everything fresh
+  // Download everything fresh
   for (const filename of filesToDownload) {
     const path = baseUrl + filename
 
@@ -59,16 +59,23 @@ export async function main(ns) {
     }
   }
 
-  // 🔽 Clear cached map so spider rebuilds
+  // Clear cached map so spider rebuilds
   valuesToRemove.forEach((key) => localStorage.removeItem(key))
 
-  // 🔽 Decide what system to run
+  // Decide what system to run
   let nextScript = 'runHacking.js'
-
   if (USE_OVERLAP_BATCH) {
     nextScript = 'overlapBatchController.js'
   }
 
-  ns.tprint(`[${localeHHMMSS()}] Spawning killAll.js → ${nextScript}`)
-  ns.spawn('killAll.js', 1, nextScript)
+  ns.tprint(`[${localeHHMMSS()}] Starting killAll.js → ${nextScript}`)
+  ns.run('killAll.js', 1, nextScript)
+
+  // Give killAll/spider/startup chain time to settle
+  await ns.sleep(15000)
+
+  if (!ns.isRunning('playerServers.js', 'home')) {
+    ns.tprint(`[${localeHHMMSS()}] Starting playerServers.js`)
+    ns.run('playerServers.js', 1)
+  }
 }
