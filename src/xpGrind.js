@@ -1,0 +1,19 @@
+/** @param {NS} ns **/
+export async function main(ns) {
+  const target = String(ns.args[0] ?? "n00dles");
+
+  while (true) {
+    const money = ns.getServerMoneyAvailable(target);
+    const maxMoney = ns.getServerMaxMoney(target);
+    const sec = ns.getServerSecurityLevel(target);
+    const minSec = ns.getServerMinSecurityLevel(target);
+
+    if (sec > minSec + 1.5) {
+      await ns.weaken(target);
+    } else if (maxMoney > 0 && money < maxMoney * 0.9) {
+      await ns.grow(target);
+    } else {
+      await ns.weaken(target);
+    }
+  }
+}
