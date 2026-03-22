@@ -10,6 +10,13 @@ const filesToDownload = [
   'killAll.js',
   'runHacking.js',
   'find.js',
+
+  // NEW BATCH SYSTEM
+  'prepTarget.js',
+  'batchHack.js',
+  'batchGrow.js',
+  'batchWeaken.js',
+  'batchController.js',
 ]
 const valuesToRemove = ['BB_SERVER_MAP']
 
