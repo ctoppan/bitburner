@@ -30,7 +30,7 @@ export async function main(ns) {
   const symbols = ns.stock.getSymbols();
   const lastPrice = Object.fromEntries(symbols.map((s) => [s, ns.stock.getPrice(s)]));
 
-  ns.tail();
+  ns.ui.openTail();
 
   while (true) {
     const snapshots = symbols.map((sym) => snapshot(ns, sym, has4S, lastPrice[sym], canShort));
