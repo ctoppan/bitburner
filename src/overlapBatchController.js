@@ -4,7 +4,9 @@ export async function main(ns) {
   const hackPct = clamp(Number(ns.args[1] ?? 0.02), 0.005, 0.08);
   const spacer = Math.max(100, Number(ns.args[2] ?? 200));
   const homeReserve = Math.max(16, Number(ns.args[3] ?? 64));
-  const maxBatches = Math.max(1, Number(ns.args[4] ?? 20));
+
+  // High default ceiling. Real limiting is done dynamically each cycle.
+  const maxBatches = Math.max(1, Number(ns.args[4] ?? 500));
 
   const scripts = ["batchHack.js", "batchGrow.js", "batchWeaken.js"];
   for (const script of scripts) {
@@ -15,6 +17,9 @@ export async function main(ns) {
   }
 
   ns.disableLog("ALL");
+  ns.ui.openTail();
+  ns.ui.resizeTail(420, 220);
+  ns.ui.moveTail(1180, 60);
 
   let target = "";
   let nextLanding = 0;
@@ -48,7 +53,6 @@ export async function main(ns) {
     const maxMoney = ns.getServerMaxMoney(target);
     const weakenTime = ns.getWeakenTime(target);
 
-    // Looser thresholds so tiny drift doesn't constantly trigger prep.
     const needsWeaken = sec > minSec + 1.0;
     const needsGrow = money < maxMoney * 0.95;
     const inPrep = needsWeaken || needsGrow;
@@ -56,7 +60,6 @@ export async function main(ns) {
     if (inPrep) {
       if (prepStart === 0) prepStart = Date.now();
 
-      // Only apply timeout while actively prepping.
       if (!manualTarget && Date.now() - prepStart > Math.max(180000, weakenTime * 2)) {
         ns.tprint(`[overlapBatchController.js] Prep timeout on ${target}, re-evaluating target`);
         target = "";
@@ -87,7 +90,6 @@ export async function main(ns) {
         continue;
       }
     } else {
-      // Healthy enough to batch, so clear prep timer.
       prepStart = 0;
     }
 
@@ -99,10 +101,27 @@ export async function main(ns) {
     }
 
     const availableBatches = countFittableBatches(ns, hosts, template, homeReserve);
-    const batchesToLaunch = Math.min(maxBatches, availableBatches);
+    const fleetLaunchCap = estimateFleetLaunchCap(ns, hosts, template, homeReserve);
+    const timingCap = estimateTimingCap(ns, target, spacer);
+
+    const batchesToLaunch = Math.min(
+      maxBatches,
+      availableBatches,
+      fleetLaunchCap,
+      timingCap
+    );
 
     if (batchesToLaunch < 1) {
-      showStatus(ns, target, money, maxMoney, sec, minSec, "WAIT_RAM", template);
+      showStatus(
+        ns,
+        target,
+        money,
+        maxMoney,
+        sec,
+        minSec,
+        `WAIT_RAM avail:${availableBatches} fleet:${fleetLaunchCap} time:${timingCap}`,
+        template
+      );
       await ns.sleep(1000);
       continue;
     }
@@ -122,7 +141,17 @@ export async function main(ns) {
       nextLanding = Math.max(nextLanding, Date.now() + weakenTime + spacer * 4);
     }
 
-    showStatus(ns, target, money, maxMoney, sec, minSec, `BATCH x${launched}`, template);
+    showStatus(
+      ns,
+      target,
+      money,
+      maxMoney,
+      sec,
+      minSec,
+      `BATCH x${launched} avail:${availableBatches} fleet:${fleetLaunchCap} time:${timingCap}`,
+      template
+    );
+
     await ns.sleep(Math.max(200, spacer));
   }
 }
@@ -311,13 +340,42 @@ function countFittableBatches(ns, hosts, template, homeReserve) {
     totalFree += freeRam(ns, host, homeReserve);
   }
 
-  const batchRam =
+  const batchRam = batchRamCost(ns, template);
+  return Math.floor(totalFree / Math.max(1, batchRam));
+}
+
+function batchRamCost(ns, template) {
+  return (
     template[0].threads * ns.getScriptRam(template[0].script, "home") +
     template[1].threads * ns.getScriptRam(template[1].script, "home") +
     template[2].threads * ns.getScriptRam(template[2].script, "home") +
-    template[3].threads * ns.getScriptRam(template[3].script, "home");
+    template[3].threads * ns.getScriptRam(template[3].script, "home")
+  );
+}
 
-  return Math.floor(totalFree / Math.max(1, batchRam));
+function estimateFleetLaunchCap(ns, hosts, template, homeReserve) {
+  const batchRam = batchRamCost(ns, template);
+  if (batchRam <= 0) return 1;
+
+  let totalFree = 0;
+  let largeHostCount = 0;
+
+  for (const host of hosts) {
+    const free = freeRam(ns, host, homeReserve);
+    totalFree += free;
+    if (free >= batchRam) largeHostCount++;
+  }
+
+  const ramBased = Math.floor(totalFree / batchRam);
+  const hostBased = Math.max(1, largeHostCount * 8);
+
+  return Math.max(1, Math.min(ramBased, hostBased));
+}
+
+function estimateTimingCap(ns, target, spacer) {
+  const weakenTime = ns.getWeakenTime(target);
+  const spacingWindow = Math.max(1, spacer * 4);
+  return Math.max(20, Math.floor(weakenTime / spacingWindow));
 }
 
 function runPrepWeaken(ns, hosts, target, homeReserve) {
