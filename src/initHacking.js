@@ -1,3 +1,4 @@
+const USE_BATCH = true
 const baseUrl = 'https://raw.githubusercontent.com/ctoppan/bitburner/master/src/'
 const filesToDownload = [
   'common.js',
