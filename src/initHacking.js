@@ -1,4 +1,3 @@
-const USE_BATCH = true
 const baseUrl = 'https://raw.githubusercontent.com/ctoppan/bitburner/master/src/'
 const filesToDownload = [
   'common.js',
@@ -12,7 +11,7 @@ const filesToDownload = [
   'runHacking.js',
   'find.js',
 
-  // NEW BATCH SYSTEM
+  // batch system
   'prepTarget.js',
   'batchHack.js',
   'batchGrow.js',
@@ -32,7 +31,7 @@ function localeHHMMSS(ms = 0) {
 export async function main(ns) {
   ns.tprint(`[${localeHHMMSS()}] Starting initHacking.js`)
 
-  let hostname = ns.getHostname()
+  const hostname = ns.getHostname()
 
   if (hostname !== 'home') {
     throw new Error('Run the script from home')
@@ -41,15 +40,17 @@ export async function main(ns) {
   for (let i = 0; i < filesToDownload.length; i++) {
     const filename = filesToDownload[i]
     const path = baseUrl + filename
+
     await ns.scriptKill(filename, 'home')
     await ns.rm(filename)
-    await ns.sleep(200)
+    await ns.sleep(100)
+
     ns.tprint(`[${localeHHMMSS()}] Trying to download ${path}`)
     await ns.wget(path + '?ts=' + new Date().getTime(), filename)
   }
 
-  valuesToRemove.map((value) => localStorage.removeItem(value))
+  valuesToRemove.forEach((value) => localStorage.removeItem(value))
 
   ns.tprint(`[${localeHHMMSS()}] Spawning killAll.js`)
-  ns.spawn('killAll.js', 1, 'runHacking.js')
+  ns.spawn('killAll.js', 1, 'batchController.js')
 }
