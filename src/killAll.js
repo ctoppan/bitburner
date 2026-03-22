@@ -1,22 +1,26 @@
 const scriptsToKillOnHome = [
-  // legacy
+  // legacy workers/controllers
   "mainHack.js",
   "spider.js",
   "grow.js",
   "hack.js",
   "weaken.js",
   "runHacking.js",
-  "initHacking.js",
-  "start.js",
   "find.js",
 
-  // batch
+  // batch system
   "prepTarget.js",
   "batchHack.js",
   "batchGrow.js",
   "batchWeaken.js",
   "batchController.js",
   "overlapBatchController.js",
+
+  // optional utilities that are safe to restart
+  "backdoorHelper.js",
+  "xpGrind.js",
+  "xpDistributor.js",
+  "stopXpGrind.js",
 ];
 
 function localeHHMMSS(ms = 0) {
@@ -34,12 +38,19 @@ export async function main(ns) {
     throw new Error("Run the script from home");
   }
 
+  // Kill selected home scripts only.
+  // Intentionally do NOT kill:
+  // - initHacking.js
+  // - start.js
+  // - playerServers.js
+  // - stockTrader.js
   for (const script of scriptsToKillOnHome) {
     try {
       await ns.scriptKill(script, "home");
     } catch {}
   }
 
+  // Scan the whole network fresh so purchased server changes are reflected.
   const seen = new Set(["home"]);
   const queue = ["home"];
   const servers = [];
@@ -56,6 +67,8 @@ export async function main(ns) {
     }
   }
 
+  // Kill everything on remote hosts.
+  // This includes purchased servers, which is fine because the controller will refill them.
   for (const host of servers) {
     if (host === "home") continue;
     if (!ns.serverExists(host)) continue;
