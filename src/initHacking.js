@@ -3,33 +3,48 @@ const baseUrl = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src/
 // Toggle which hacking system to run
 const USE_OVERLAP_BATCH = true;
 
-const filesToDownload = [
-  // core
-  "common.js",
-  "spider.js",
-  "find.js",
-  "backdoorHelper.js",
+function stockApiUnlocked(ns) {
+  try {
+    return !!(ns.stock && ns.stock.hasTIXAPIAccess && ns.stock.hasTIXAPIAccess());
+  } catch {
+    return false;
+  }
+}
 
-  // legacy system (kept for fallback)
-  "mainHack.js",
-  "grow.js",
-  "hack.js",
-  "weaken.js",
-  "runHacking.js",
+function getFilesToDownload(ns) {
+  const files = [
+    // core
+    "common.js",
+    "spider.js",
+    "find.js",
+    "backdoorHelper.js",
 
-  // management
-  "killAll.js",
-  "playerServers.js",
-  "stockTrader.js",
+    // legacy system (kept for fallback)
+    "mainHack.js",
+    "grow.js",
+    "hack.js",
+    "weaken.js",
+    "runHacking.js",
 
-  // batch system
-  "prepTarget.js",
-  "batchHack.js",
-  "batchGrow.js",
-  "batchWeaken.js",
-  "batchController.js",
-  "overlapBatchController.js",
-];
+    // management
+    "killAll.js",
+    "playerServers.js",
+
+    // batch system
+    "prepTarget.js",
+    "batchHack.js",
+    "batchGrow.js",
+    "batchWeaken.js",
+    "batchController.js",
+    "overlapBatchController.js",
+  ];
+
+  if (stockApiUnlocked(ns)) {
+    files.push("stockTrader.js");
+  }
+
+  return files;
+}
 
 const valuesToRemove = ["BB_SERVER_MAP"];
 
@@ -44,6 +59,13 @@ export async function main(ns) {
   if (ns.getHostname() !== "home") {
     throw new Error("Run the script from home");
   }
+
+  const stockEnabled = stockApiUnlocked(ns);
+  const filesToDownload = getFilesToDownload(ns);
+
+  ns.tprint(
+    `[${localeHHMMSS()}] Stock API ${stockEnabled ? "detected, including stockTrader.js" : "not unlocked, skipping stockTrader.js"}`
+  );
 
   for (const filename of filesToDownload) {
     const path = `${baseUrl}${filename}?ts=${Date.now()}`;
@@ -84,8 +106,9 @@ export async function main(ns) {
     ns.tprint(`[${localeHHMMSS()}] Starting playerServers.js`);
     ns.run("playerServers.js", 1);
   }
-  if (ns.stock?.hasTIXAPIAccess?.() && !ns.isRunning("stockTrader.js", "home")) {
-	ns.tprint(`[${localeHHMMSS()}] Starting stockTrader.js`);
-	ns.run("stockTrader.js", 1);
+
+  if (stockEnabled && !ns.isRunning("stockTrader.js", "home")) {
+    ns.tprint(`[${localeHHMMSS()}] Starting stockTrader.js`);
+    ns.run("stockTrader.js", 1);
   }
 }
