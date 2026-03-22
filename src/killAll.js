@@ -6,6 +6,7 @@ const settings = {
 }
 
 const scriptsToKill = [
+  // legacy
   'mainHack.js',
   'spider.js',
   'grow.js',
@@ -17,12 +18,13 @@ const scriptsToKill = [
   'start.js',
   'find.js',
 
-  // batch system
+  // batch
   'prepTarget.js',
   'batchHack.js',
   'batchGrow.js',
   'batchWeaken.js',
   'batchController.js',
+  'overlapBatchController.js',
 ]
 
 function getItem(key) {
@@ -34,7 +36,6 @@ function localeHHMMSS(ms = 0) {
   if (!ms) {
     ms = new Date().getTime()
   }
-
   return new Date(ms).toLocaleTimeString()
 }
 
@@ -52,7 +53,11 @@ export async function main(ns) {
 
   if (!serverMap || serverMap.lastUpdate < new Date().getTime() - settings.mapRefreshInterval) {
     ns.tprint(`[${localeHHMMSS()}] Spawning spider.js`)
-    ns.spawn('spider.js', 1, 'killAll.js')
+    if (scriptToRunAfter) {
+      ns.spawn('spider.js', 1, scriptToRunAfter)
+    } else {
+      ns.spawn('spider.js', 1, 'overlapBatchController.js')
+    }
     return
   }
 
@@ -74,7 +79,7 @@ export async function main(ns) {
     ns.tprint(`[${localeHHMMSS()}] Spawning ${scriptToRunAfter}`)
     ns.spawn(scriptToRunAfter, 1)
   } else {
-    ns.tprint(`[${localeHHMMSS()}] Spawning batchController.js`)
-    ns.spawn('batchController.js', 1)
+    ns.tprint(`[${localeHHMMSS()}] Spawning overlapBatchController.js`)
+    ns.spawn('overlapBatchController.js', 1)
   }
 }

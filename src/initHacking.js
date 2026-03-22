@@ -14,11 +14,11 @@ const filesToDownload = [
   'grow.js',
   'hack.js',
   'weaken.js',
-  'playerServers.js',
   'runHacking.js',
 
   // management
   'killAll.js',
+  'playerServers.js',
 
   // batch system
   'prepTarget.js',
