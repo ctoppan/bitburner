@@ -1,4 +1,4 @@
-const baseUrl = 'https://raw.githubusercontent.com/moriakaice/bitburner/master/src/'
+const baseUrl = 'https://raw.githubusercontent.com/ctoppan/bitburner/master/src/'
 const filesToDownload = [
   'common.js',
   'mainHack.js',
@@ -27,7 +27,7 @@ export async function main(ns) {
   let hostname = ns.getHostname()
 
   if (hostname !== 'home') {
-    throw new Exception('Run the script from home')
+    throw new Error('Run the script from home')
   }
 
   for (let i = 0; i < filesToDownload.length; i++) {
