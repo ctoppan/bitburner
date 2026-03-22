@@ -1,7 +1,7 @@
 /** @param {NS} ns **/
 export async function main(ns) {
   const manualTarget = String(ns.args[0] ?? "");
-  const hackPct = clamp(Number(ns.args[1] ?? 0.02), 0.005, 0.1);
+  const hackPct = clamp(Number(ns.args[1] ?? 0.02), 0.005, 0.08);
   const spacer = Math.max(100, Number(ns.args[2] ?? 200));
   const homeReserve = Math.max(16, Number(ns.args[3] ?? 64));
   const maxBatches = Math.max(1, Number(ns.args[4] ?? 20));
@@ -18,6 +18,7 @@ export async function main(ns) {
 
   let target = "";
   let nextLanding = 0;
+  let prepStart = 0;
 
   while (true) {
     const hosts = await getUsableHosts(ns, scripts, homeReserve);
@@ -37,6 +38,7 @@ export async function main(ns) {
     if (picked !== target) {
       target = picked;
       nextLanding = Date.now() + ns.getWeakenTime(target) + 2000;
+      prepStart = Date.now();
       ns.tprint(`[overlapBatchController.js] Target selected: ${target}`);
     }
 
@@ -44,6 +46,15 @@ export async function main(ns) {
     const minSec = ns.getServerMinSecurityLevel(target);
     const money = ns.getServerMoneyAvailable(target);
     const maxMoney = ns.getServerMaxMoney(target);
+    const weakenTime = ns.getWeakenTime(target);
+
+    // If auto mode and prep takes too long, abandon target and retry selection
+    if (!manualTarget && Date.now() - prepStart > Math.max(180000, weakenTime * 2)) {
+      ns.tprint(`[overlapBatchController.js] Prep timeout on ${target}, re-evaluating target`);
+      target = "";
+      await ns.sleep(500);
+      continue;
+    }
 
     if (sec > minSec + 0.5) {
       runPrepWeaken(ns, hosts, target, homeReserve);
@@ -123,25 +134,21 @@ function materializeBatch(ns, target, template, landing, spacer, idx) {
     {
       script: "batchHack.js",
       threads: template[0].threads,
-      delay: Math.max(0, landing - spacer * 3 - Date.now() - hackTime),
       args: [target, Math.max(0, landing - spacer * 3 - Date.now() - hackTime), `${tag}-H`],
     },
     {
       script: "batchWeaken.js",
       threads: template[1].threads,
-      delay: Math.max(0, landing - spacer * 2 - Date.now() - weakenTime),
       args: [target, Math.max(0, landing - spacer * 2 - Date.now() - weakenTime), `${tag}-W1`],
     },
     {
       script: "batchGrow.js",
       threads: template[2].threads,
-      delay: Math.max(0, landing - spacer - Date.now() - growTime),
       args: [target, Math.max(0, landing - spacer - Date.now() - growTime), `${tag}-G`],
     },
     {
       script: "batchWeaken.js",
       threads: template[3].threads,
-      delay: Math.max(0, landing - Date.now() - weakenTime),
       args: [target, Math.max(0, landing - Date.now() - weakenTime), `${tag}-W2`],
     },
   ];
@@ -214,19 +221,26 @@ function pickBestTarget(ns) {
 
     if (host === "home") continue;
     if (!ns.hasRootAccess(host)) continue;
-    if (ns.getServerRequiredHackingLevel(host) > playerLevel) continue;
+
+    const req = ns.getServerRequiredHackingLevel(host);
+    if (req > playerLevel) continue;
+    if (req > playerLevel * 0.75) continue; // be conservative
 
     const maxMoney = ns.getServerMaxMoney(host);
     if (maxMoney <= 0) continue;
 
     const minSec = Math.max(1, ns.getServerMinSecurityLevel(host));
-    const weakenTime = Math.max(1, ns.getWeakenTime(host));
-    const req = Math.max(1, ns.getServerRequiredHackingLevel(host));
+    const weakenTime = ns.getWeakenTime(host);
+    const hackChance = ns.hackAnalyzeChance(host);
+
+    if (weakenTime > 15 * 60 * 1000) continue; // skip slow prep targets
+    if (hackChance < 0.6) continue; // skip unreliable targets
 
     const score =
       (maxMoney / minSec) *
-      (1 / (weakenTime / 60000)) *
-      (1 / Math.max(1, req / Math.max(1, playerLevel)));
+      hackChance *
+      (1 / Math.max(1, weakenTime / 60000)) *
+      (1 - req / Math.max(1, playerLevel * 1.2));
 
     candidates.push({ host, score });
   }
