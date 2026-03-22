@@ -38,7 +38,7 @@ export async function main(ns) {
     if (picked !== target) {
       target = picked;
       nextLanding = Date.now() + ns.getWeakenTime(target) + 2000;
-      prepStart = Date.now();
+      prepStart = 0;
       ns.tprint(`[overlapBatchController.js] Target selected: ${target}`);
     }
 
@@ -48,26 +48,47 @@ export async function main(ns) {
     const maxMoney = ns.getServerMaxMoney(target);
     const weakenTime = ns.getWeakenTime(target);
 
-    // If auto mode and prep takes too long, abandon target and retry selection
-    if (!manualTarget && Date.now() - prepStart > Math.max(180000, weakenTime * 2)) {
-      ns.tprint(`[overlapBatchController.js] Prep timeout on ${target}, re-evaluating target`);
-      target = "";
-      await ns.sleep(500);
-      continue;
-    }
+    // Looser thresholds so tiny drift doesn't constantly trigger prep.
+    const needsWeaken = sec > minSec + 1.0;
+    const needsGrow = money < maxMoney * 0.95;
+    const inPrep = needsWeaken || needsGrow;
 
-    if (sec > minSec + 0.5) {
-      runPrepWeaken(ns, hosts, target, homeReserve);
-      showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_WEAKEN");
-      await ns.sleep(1000);
-      continue;
-    }
+    if (inPrep) {
+      if (prepStart === 0) prepStart = Date.now();
 
-    if (money < maxMoney * 0.99) {
-      runPrepGrow(ns, hosts, target, homeReserve);
-      showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_GROW");
-      await ns.sleep(1000);
-      continue;
+      // Only apply timeout while actively prepping.
+      if (!manualTarget && Date.now() - prepStart > Math.max(180000, weakenTime * 2)) {
+        ns.tprint(`[overlapBatchController.js] Prep timeout on ${target}, re-evaluating target`);
+        target = "";
+        prepStart = 0;
+        await ns.sleep(500);
+        continue;
+      }
+
+      if (needsWeaken) {
+        if (!hasPrepWeakenRunning(ns, hosts, target)) {
+          runPrepWeaken(ns, hosts, target, homeReserve);
+          showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_WEAKEN");
+        } else {
+          showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_WEAKEN_WAIT");
+        }
+        await ns.sleep(1000);
+        continue;
+      }
+
+      if (needsGrow) {
+        if (!hasPrepGrowRunning(ns, hosts, target)) {
+          runPrepGrow(ns, hosts, target, homeReserve);
+          showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_GROW");
+        } else {
+          showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_GROW_WAIT");
+        }
+        await ns.sleep(1000);
+        continue;
+      }
+    } else {
+      // Healthy enough to batch, so clear prep timer.
+      prepStart = 0;
     }
 
     const template = buildBatchTemplate(ns, target, hackPct);
@@ -95,7 +116,11 @@ export async function main(ns) {
       launched++;
     }
 
-    nextLanding += launched * spacer * 4;
+    if (launched > 0) {
+      nextLanding += launched * spacer * 4;
+    } else {
+      nextLanding = Math.max(nextLanding, Date.now() + weakenTime + spacer * 4);
+    }
 
     showStatus(ns, target, money, maxMoney, sec, minSec, `BATCH x${launched}`, template);
     await ns.sleep(Math.max(200, spacer));
@@ -224,7 +249,7 @@ function pickBestTarget(ns) {
 
     const req = ns.getServerRequiredHackingLevel(host);
     if (req > playerLevel) continue;
-    if (req > playerLevel * 0.75) continue; // be conservative
+    if (req > playerLevel * 0.75) continue;
 
     const maxMoney = ns.getServerMaxMoney(host);
     if (maxMoney <= 0) continue;
@@ -233,8 +258,8 @@ function pickBestTarget(ns) {
     const weakenTime = ns.getWeakenTime(host);
     const hackChance = ns.hackAnalyzeChance(host);
 
-    if (weakenTime > 15 * 60 * 1000) continue; // skip slow prep targets
-    if (hackChance < 0.6) continue; // skip unreliable targets
+    if (weakenTime > 15 * 60 * 1000) continue;
+    if (hackChance < 0.6) continue;
 
     const score =
       (maxMoney / minSec) *
@@ -320,6 +345,42 @@ function runPrepGrow(ns, hosts, target, homeReserve) {
   }
 }
 
+function hasPrepWeakenRunning(ns, hosts, target) {
+  for (const host of hosts) {
+    for (const proc of ns.ps(host)) {
+      if (
+        proc.filename === "batchWeaken.js" &&
+        proc.args?.[0] === target &&
+        typeof proc.args?.[2] === "string" &&
+        String(proc.args[2]).startsWith("prepW-")
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function hasPrepGrowRunning(ns, hosts, target) {
+  let hasGrow = false;
+  let hasWeaken = false;
+
+  for (const host of hosts) {
+    for (const proc of ns.ps(host)) {
+      if (proc.args?.[0] !== target) continue;
+      if (typeof proc.args?.[2] !== "string") continue;
+
+      const tag = String(proc.args[2]);
+      if (proc.filename === "batchGrow.js" && tag.startsWith("prepG-")) hasGrow = true;
+      if (proc.filename === "batchWeaken.js" && tag.startsWith("prepG-")) hasWeaken = true;
+
+      if (hasGrow && hasWeaken) return true;
+    }
+  }
+
+  return false;
+}
+
 function freeRam(ns, host, homeReserve) {
   const reserve = host === "home" ? homeReserve : 0;
   return Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host) - reserve);
@@ -332,7 +393,9 @@ function showStatus(ns, target, money, maxMoney, sec, minSec, mode, template = n
   ns.print(`Money: ${ns.formatNumber(money, 2)} / ${ns.formatNumber(maxMoney, 2)}`);
   ns.print(`Security: ${sec.toFixed(2)} / ${minSec.toFixed(2)}`);
   if (template) {
-    ns.print(`Threads: H ${template[0].threads} | W1 ${template[1].threads} | G ${template[2].threads} | W2 ${template[3].threads}`);
+    ns.print(
+      `Threads: H ${template[0].threads} | W1 ${template[1].threads} | G ${template[2].threads} | W2 ${template[3].threads}`
+    );
   }
 }
 
