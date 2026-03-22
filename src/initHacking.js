@@ -1,15 +1,24 @@
 const baseUrl = 'https://raw.githubusercontent.com/ctoppan/bitburner/master/src/'
+
+// 🔥 Toggle system here
+const USE_OVERLAP_BATCH = true
+
 const filesToDownload = [
+  // core
   'common.js',
-  'mainHack.js',
   'spider.js',
+  'find.js',
+
+  // legacy system (kept for fallback)
+  'mainHack.js',
   'grow.js',
   'hack.js',
   'weaken.js',
   'playerServers.js',
-  'killAll.js',
   'runHacking.js',
-  'find.js',
+
+  // management
+  'killAll.js',
 
   // batch system
   'prepTarget.js',
@@ -17,40 +26,49 @@ const filesToDownload = [
   'batchGrow.js',
   'batchWeaken.js',
   'batchController.js',
+  'overlapBatchController.js',
 ]
+
 const valuesToRemove = ['BB_SERVER_MAP']
 
 function localeHHMMSS(ms = 0) {
-  if (!ms) {
-    ms = new Date().getTime()
-  }
-
+  if (!ms) ms = new Date().getTime()
   return new Date(ms).toLocaleTimeString()
 }
 
 export async function main(ns) {
   ns.tprint(`[${localeHHMMSS()}] Starting initHacking.js`)
 
-  const hostname = ns.getHostname()
-
-  if (hostname !== 'home') {
+  if (ns.getHostname() !== 'home') {
     throw new Error('Run the script from home')
   }
 
-  for (let i = 0; i < filesToDownload.length; i++) {
-    const filename = filesToDownload[i]
+  // 🔽 Download everything fresh
+  for (const filename of filesToDownload) {
     const path = baseUrl + filename
 
     await ns.scriptKill(filename, 'home')
     await ns.rm(filename)
-    await ns.sleep(100)
+    await ns.sleep(50)
 
-    ns.tprint(`[${localeHHMMSS()}] Trying to download ${path}`)
-    await ns.wget(path + '?ts=' + new Date().getTime(), filename)
+    ns.tprint(`[${localeHHMMSS()}] Downloading ${filename}`)
+    const ok = await ns.wget(path + '?ts=' + Date.now(), filename)
+
+    if (!ok) {
+      ns.tprint(`[WARN] Failed to download ${filename}`)
+    }
   }
 
-  valuesToRemove.forEach((value) => localStorage.removeItem(value))
+  // 🔽 Clear cached map so spider rebuilds
+  valuesToRemove.forEach((key) => localStorage.removeItem(key))
 
-  ns.tprint(`[${localeHHMMSS()}] Spawning killAll.js`)
-  ns.spawn('killAll.js', 1, 'batchController.js')
+  // 🔽 Decide what system to run
+  let nextScript = 'runHacking.js'
+
+  if (USE_OVERLAP_BATCH) {
+    nextScript = 'overlapBatchController.js'
+  }
+
+  ns.tprint(`[${localeHHMMSS()}] Spawning killAll.js → ${nextScript}`)
+  ns.spawn('killAll.js', 1, nextScript)
 }
