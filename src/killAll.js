@@ -1,85 +1,74 @@
-const settings = {
-  mapRefreshInterval: 24 * 60 * 60 * 1000,
-  keys: {
-    serverMap: 'BB_SERVER_MAP',
-  },
-}
-
-const scriptsToKill = [
+const scriptsToKillOnHome = [
   // legacy
-  'mainHack.js',
-  'spider.js',
-  'grow.js',
-  'hack.js',
-  'weaken.js',
-  'playerServers.js',
-  'runHacking.js',
-  'initHacking.js',
-  'start.js',
-  'find.js',
+  "mainHack.js",
+  "spider.js",
+  "grow.js",
+  "hack.js",
+  "weaken.js",
+  "runHacking.js",
+  "initHacking.js",
+  "start.js",
+  "find.js",
 
   // batch
-  'prepTarget.js',
-  'batchHack.js',
-  'batchGrow.js',
-  'batchWeaken.js',
-  'batchController.js',
-  'overlapBatchController.js',
-]
-
-function getItem(key) {
-  const item = localStorage.getItem(key)
-  return item ? JSON.parse(item) : undefined
-}
+  "prepTarget.js",
+  "batchHack.js",
+  "batchGrow.js",
+  "batchWeaken.js",
+  "batchController.js",
+  "overlapBatchController.js",
+];
 
 function localeHHMMSS(ms = 0) {
-  if (!ms) {
-    ms = new Date().getTime()
-  }
-  return new Date(ms).toLocaleTimeString()
+  if (!ms) ms = Date.now();
+  return new Date(ms).toLocaleTimeString();
 }
 
 export async function main(ns) {
-  ns.tprint(`[${localeHHMMSS()}] Starting killAll.js`)
+  ns.tprint(`[${localeHHMMSS()}] Starting killAll.js`);
 
-  const scriptToRunAfter = ns.args[0]
-  const hostname = ns.getHostname()
+  const scriptToRunAfter = String(ns.args[0] ?? "");
+  const hostname = ns.getHostname();
 
-  if (hostname !== 'home') {
-    throw new Error('Run the script from home')
+  if (hostname !== "home") {
+    throw new Error("Run the script from home");
   }
 
-  const serverMap = getItem(settings.keys.serverMap)
+  for (const script of scriptsToKillOnHome) {
+    try {
+      await ns.scriptKill(script, "home");
+    } catch {}
+  }
 
-  if (!serverMap || serverMap.lastUpdate < new Date().getTime() - settings.mapRefreshInterval) {
-    ns.tprint(`[${localeHHMMSS()}] Spawning spider.js`)
-    if (scriptToRunAfter) {
-      ns.spawn('spider.js', 1, scriptToRunAfter)
-    } else {
-      ns.spawn('spider.js', 1, 'overlapBatchController.js')
+  const seen = new Set(["home"]);
+  const queue = ["home"];
+  const servers = [];
+
+  while (queue.length > 0) {
+    const host = queue.shift();
+    servers.push(host);
+
+    for (const next of ns.scan(host)) {
+      if (!seen.has(next)) {
+        seen.add(next);
+        queue.push(next);
+      }
     }
-    return
   }
 
-  for (let i = 0; i < scriptsToKill.length; i++) {
-    await ns.scriptKill(scriptsToKill[i], 'home')
+  for (const host of servers) {
+    if (host === "home") continue;
+    if (!ns.serverExists(host)) continue;
+
+    try {
+      await ns.killall(host);
+    } catch {}
   }
 
-  const killableServers = Object.keys(serverMap.servers)
-    .filter((host) => ns.serverExists(host))
-    .filter((host) => host !== 'home')
+  ns.tprint(`[${localeHHMMSS()}] All remote processes killed`);
 
-  for (let i = 0; i < killableServers.length; i++) {
-    await ns.killall(killableServers[i])
-  }
-
-  ns.tprint(`[${localeHHMMSS()}] All processes killed`)
-
-  if (scriptToRunAfter) {
-    ns.tprint(`[${localeHHMMSS()}] Spawning ${scriptToRunAfter}`)
-    ns.spawn(scriptToRunAfter, 1)
-  } else {
-    ns.tprint(`[${localeHHMMSS()}] Spawning overlapBatchController.js`)
-    ns.spawn('overlapBatchController.js', 1)
-  }
+  // Always rebuild the map after a reset so purchased server changes are reflected.
+  const nextScript = scriptToRunAfter || "overlapBatchController.js";
+  ns.tprint(`[${localeHHMMSS()}] Spawning spider.js -> ${nextScript}`);
+  ns.spawn("spider.js", 1, nextScript);
 }

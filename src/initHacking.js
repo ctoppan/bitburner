@@ -1,81 +1,85 @@
-const baseUrl = 'https://raw.githubusercontent.com/ctoppan/bitburner/master/src/'
+const baseUrl = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src/";
 
 // Toggle which hacking system to run
-const USE_OVERLAP_BATCH = true
+const USE_OVERLAP_BATCH = true;
 
 const filesToDownload = [
   // core
-  'common.js',
-  'spider.js',
-  'find.js',
+  "common.js",
+  "spider.js",
+  "find.js",
 
   // legacy system (kept for fallback)
-  'mainHack.js',
-  'grow.js',
-  'hack.js',
-  'weaken.js',
-  'runHacking.js',
+  "mainHack.js",
+  "grow.js",
+  "hack.js",
+  "weaken.js",
+  "runHacking.js",
 
   // management
-  'killAll.js',
-  'playerServers.js',
+  "killAll.js",
+  "playerServers.js",
 
   // batch system
-  'prepTarget.js',
-  'batchHack.js',
-  'batchGrow.js',
-  'batchWeaken.js',
-  'batchController.js',
-  'overlapBatchController.js',
-]
+  "prepTarget.js",
+  "batchHack.js",
+  "batchGrow.js",
+  "batchWeaken.js",
+  "batchController.js",
+  "overlapBatchController.js",
+];
 
-const valuesToRemove = ['BB_SERVER_MAP']
+const valuesToRemove = ["BB_SERVER_MAP"];
 
 function localeHHMMSS(ms = 0) {
-  if (!ms) ms = new Date().getTime()
-  return new Date(ms).toLocaleTimeString()
+  if (!ms) ms = Date.now();
+  return new Date(ms).toLocaleTimeString();
 }
 
 export async function main(ns) {
-  ns.tprint(`[${localeHHMMSS()}] Starting initHacking.js`)
+  ns.tprint(`[${localeHHMMSS()}] Starting initHacking.js`);
 
-  if (ns.getHostname() !== 'home') {
-    throw new Error('Run the script from home')
+  if (ns.getHostname() !== "home") {
+    throw new Error("Run the script from home");
   }
 
-  // Download everything fresh
   for (const filename of filesToDownload) {
-    const path = baseUrl + filename
+    const path = `${baseUrl}${filename}?ts=${Date.now()}`;
 
-    await ns.scriptKill(filename, 'home')
-    await ns.rm(filename)
-    await ns.sleep(50)
+    try {
+      await ns.scriptKill(filename, "home");
+    } catch {}
 
-    ns.tprint(`[${localeHHMMSS()}] Downloading ${filename}`)
-    const ok = await ns.wget(path + '?ts=' + Date.now(), filename)
+    try {
+      await ns.rm(filename, "home");
+    } catch {}
+
+    await ns.sleep(50);
+
+    ns.tprint(`[${localeHHMMSS()}] Downloading ${filename}`);
+    const ok = await ns.wget(path, filename);
 
     if (!ok) {
-      ns.tprint(`[WARN] Failed to download ${filename}`)
+      ns.tprint(`[WARN ${localeHHMMSS()}] Failed to download ${filename}`);
     }
   }
 
-  // Clear cached map so spider rebuilds
-  valuesToRemove.forEach((key) => localStorage.removeItem(key))
-
-  // Decide what system to run
-  let nextScript = 'runHacking.js'
-  if (USE_OVERLAP_BATCH) {
-    nextScript = 'overlapBatchController.js'
+  for (const key of valuesToRemove) {
+    try {
+      localStorage.removeItem(key);
+    } catch {}
   }
 
-  ns.tprint(`[${localeHHMMSS()}] Starting killAll.js → ${nextScript}`)
-  ns.run('killAll.js', 1, nextScript)
+  const nextScript = USE_OVERLAP_BATCH ? "overlapBatchController.js" : "runHacking.js";
 
-  // Give killAll/spider/startup chain time to settle
-  await ns.sleep(15000)
+  ns.tprint(`[${localeHHMMSS()}] Starting killAll.js -> ${nextScript}`);
+  ns.run("killAll.js", 1, nextScript);
 
-  if (!ns.isRunning('playerServers.js', 'home')) {
-    ns.tprint(`[${localeHHMMSS()}] Starting playerServers.js`)
-    ns.run('playerServers.js', 1)
+  // Let the reset + spider chain finish.
+  await ns.sleep(15000);
+
+  if (!ns.isRunning("playerServers.js", "home")) {
+    ns.tprint(`[${localeHHMMSS()}] Starting playerServers.js`);
+    ns.run("playerServers.js", 1);
   }
 }

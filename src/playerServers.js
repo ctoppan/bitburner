@@ -5,40 +5,49 @@ const settings = {
   minGbRam: 64,
   totalMoneyAllocation: 0.9,
   actions: {
-    BUY: 'buy',
-    UPGRADE: 'upgrade',
+    BUY: "buy",
+    UPGRADE: "upgrade",
   },
   keys: {
-    serverMap: 'BB_SERVER_MAP',
+    serverMap: "BB_SERVER_MAP",
   },
-}
+};
 
 function getItem(key) {
-  let item = localStorage.getItem(key)
-
-  return item ? JSON.parse(item) : undefined
+  const item = localStorage.getItem(key);
+  return item ? JSON.parse(item) : undefined;
 }
 
 function setItem(key, value) {
-  localStorage.setItem(key, JSON.stringify(value))
+  localStorage.setItem(key, JSON.stringify(value));
 }
 
 function localeHHMMSS(ms = 0) {
-  if (!ms) {
-    ms = new Date().getTime()
-  }
-
-  return new Date(ms).toLocaleTimeString()
+  if (!ms) ms = Date.now();
+  return new Date(ms).toLocaleTimeString();
 }
 
 function createUUID() {
-  var dt = new Date().getTime()
-  var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-    var r = (dt + Math.random() * 16) % 16 | 0
-    dt = Math.floor(dt / 16)
-    return (c == 'x' ? r : (r & 0x3) | 0x8).toString(16)
-  })
-  return uuid
+  let dt = Date.now();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (dt + Math.random() * 16) % 16 | 0;
+    dt = Math.floor(dt / 16);
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+function ensureServerMap() {
+  let serverMap = getItem(settings.keys.serverMap);
+  if (!serverMap || typeof serverMap !== "object") {
+    serverMap = {
+      lastUpdate: Date.now(),
+      servers: {},
+    };
+  }
+  if (!serverMap.servers || typeof serverMap.servers !== "object") {
+    serverMap.servers = {};
+  }
+  return serverMap;
 }
 
 function updateServer(ns, serverMap, host) {
@@ -51,136 +60,188 @@ function updateServer(ns, serverMap, host) {
     minSecurityLevel: ns.getServerMinSecurityLevel(host),
     baseSecurityLevel: ns.getServerBaseSecurityLevel(host),
     ram: ns.getServerMaxRam(host),
-    connections: ['home'],
-    parent: 'home',
+    connections: ["home"],
+    parent: "home",
     children: [],
+  };
+
+  for (const hostname of Object.keys(serverMap.servers)) {
+    if (!ns.serverExists(hostname)) {
+      delete serverMap.servers[hostname];
+    }
   }
 
-  Object.keys(serverMap.servers).map((hostname) => {
-    if (!ns.serverExists(hostname)) {
-      delete serverMap.servers[hostname]
-    }
-  })
+  serverMap.lastUpdate = Date.now();
+  setItem(settings.keys.serverMap, serverMap);
+}
 
-  setItem(settings.keys.serverMap, serverMap)
+function removeServer(serverMap, host) {
+  if (serverMap?.servers?.[host]) {
+    delete serverMap.servers[host];
+    serverMap.lastUpdate = Date.now();
+    setItem(settings.keys.serverMap, serverMap);
+  }
 }
 
 function getPurchasedServers(ns) {
-  let purchasedServers = ns.getPurchasedServers()
-  if (purchasedServers.length) {
-    purchasedServers.sort((a, b) => {
-      const totalRamA = ns.getServerMaxRam(a)
-      const totalRamB = ns.getServerMaxRam(b)
+  const purchasedServers = ns.getPurchasedServers();
 
-      if (totalRamA === totalRamB) {
-        return ns.getServerMaxRam(a) - ns.getServerMaxRam(b)
-      } else {
-        return totalRamA - totalRamB
-      }
-    })
+  purchasedServers.sort((a, b) => {
+    const ramDiff = ns.getServerMaxRam(a) - ns.getServerMaxRam(b);
+    if (ramDiff !== 0) return ramDiff;
+    return a.localeCompare(b);
+  });
+
+  return purchasedServers;
+}
+
+function moneyBudget(ns) {
+  return ns.getServerMoneyAvailable("home") * settings.totalMoneyAllocation;
+}
+
+function maxAffordableRam(ns, startingRam, maxRam) {
+  let ram = Math.max(settings.minGbRam, startingRam);
+
+  while (ram * 2 <= maxRam && moneyBudget(ns) >= ns.getPurchasedServerCost(ram * 2)) {
+    ram *= 2;
   }
 
-  return purchasedServers
+  return Math.min(ram, maxRam);
 }
 
 export async function main(ns) {
-  ns.tprint(`[${localeHHMMSS()}] Starting playerServers.js`)
+  ns.tprint(`[${localeHHMMSS()}] Starting playerServers.js`);
 
-  settings.maxGbRam = ns.getPurchasedServerMaxRam()
-  settings.maxPlayerServers = ns.getPurchasedServerLimit()
-  let hostname = ns.getHostname()
+  settings.maxGbRam = ns.getPurchasedServerMaxRam();
+  settings.maxPlayerServers = ns.getPurchasedServerLimit();
 
-  if (hostname !== 'home') {
-    throw new Exception('Run the script from home')
+  if (ns.getHostname() !== "home") {
+    throw new Error("Run the script from home");
   }
 
   while (true) {
-    let didChange = false
+    let didChange = false;
+    let serverMap = ensureServerMap();
+    let purchasedServers = getPurchasedServers(ns);
 
-    const serverMap = getItem(settings.keys.serverMap)
-    let purchasedServers = getPurchasedServers(ns)
+    const action =
+      purchasedServers.length < settings.maxPlayerServers
+        ? settings.actions.BUY
+        : settings.actions.UPGRADE;
 
-    let action = purchasedServers.length < settings.maxPlayerServers ? settings.actions.BUY : settings.actions.UPGRADE
+    if (action === settings.actions.BUY) {
+      const smallestCurrentServer = purchasedServers.length
+        ? ns.getServerMaxRam(purchasedServers[0])
+        : 0;
 
-    if (action == settings.actions.BUY) {
-      let smallestCurrentServer = purchasedServers.length ? ns.getServerMaxRam(purchasedServers[0]) : 0
-      let targetRam = Math.max(settings.minGbRam, smallestCurrentServer)
+      let targetRam = Math.max(settings.minGbRam, smallestCurrentServer || settings.minGbRam);
 
       if (targetRam === settings.minGbRam) {
-        while (ns.getServerMoneyAvailable('home') * settings.totalMoneyAllocation >= targetRam * settings.gbRamCost * settings.maxPlayerServers) {
-          targetRam *= 2
+        // Try to buy the largest uniform server size we can reasonably sustain.
+        while (
+          targetRam * 2 <= settings.maxGbRam &&
+          moneyBudget(ns) >= ns.getPurchasedServerCost(targetRam * 2) * settings.maxPlayerServers
+        ) {
+          targetRam *= 2;
         }
-
-        targetRam /= 2
+      } else {
+        targetRam = maxAffordableRam(ns, targetRam, settings.maxGbRam);
       }
 
-      targetRam = Math.max(settings.minGbRam, targetRam)
-      targetRam = Math.min(targetRam, settings.maxGbRam)
-
-      if (ns.getServerMoneyAvailable('home') * settings.totalMoneyAllocation >= targetRam * settings.gbRamCost) {
-        let hostname = `pserv-${targetRam}-${createUUID()}`
-        hostname = ns.purchaseServer(hostname, targetRam)
+      if (moneyBudget(ns) >= ns.getPurchasedServerCost(targetRam)) {
+        let hostname = `pserv-${targetRam}-${createUUID()}`;
+        hostname = ns.purchaseServer(hostname, targetRam);
 
         if (hostname) {
-          ns.tprint(`[${localeHHMMSS()}] Bought new server: ${hostname} (${targetRam} GB)`)
-
-          updateServer(ns, serverMap, hostname)
-          didChange = true
+          ns.tprint(
+            `[${localeHHMMSS()}] Bought new server: ${hostname} (${ns.getServerMaxRam(hostname)} GB)`
+          );
+          updateServer(ns, serverMap, hostname);
+          didChange = true;
         }
       }
     } else {
-      let smallestCurrentServer = Math.max(ns.getServerMaxRam(purchasedServers[0]), ns.getServerUsedRam(purchasedServers[0]), settings.minGbRam)
-      let biggestCurrentServer = (ns.getServerMaxRam(purchasedServers[purchasedServers.length - 1]), ns.getServerUsedRam(purchasedServers[purchasedServers.length - 1]))
-      let targetRam = biggestCurrentServer
+      purchasedServers = getPurchasedServers(ns);
+      if (purchasedServers.length === 0) {
+        await ns.sleep(5000);
+        continue;
+      }
 
-      if (smallestCurrentServer === settings.maxGbRam) {
-        ns.tprint(`[${localeHHMMSS()}] All servers maxxed. Exiting.`)
-        ns.exit()
-        return
+      const smallestServer = purchasedServers[0];
+      const largestServer = purchasedServers[purchasedServers.length - 1];
+
+      const smallestCurrentServer = Math.max(
+        ns.getServerMaxRam(smallestServer),
+        settings.minGbRam
+      );
+
+      const biggestCurrentServer = ns.getServerMaxRam(largestServer);
+      let targetRam = biggestCurrentServer;
+
+      if (smallestCurrentServer >= settings.maxGbRam) {
+        ns.tprint(`[${localeHHMMSS()}] All servers maxxed. Exiting.`);
+        ns.exit();
+        return;
       }
 
       if (smallestCurrentServer === biggestCurrentServer) {
-        while (ns.getServerMoneyAvailable('home') * settings.totalMoneyAllocation >= targetRam * settings.gbRamCost) {
-          targetRam *= 4
+        // If the fleet is uniform, jump as high as we can afford.
+        while (
+          targetRam * 2 <= settings.maxGbRam &&
+          moneyBudget(ns) >= ns.getPurchasedServerCost(targetRam * 2)
+        ) {
+          targetRam *= 2;
         }
-
-        targetRam /= 4
+      } else {
+        // If the fleet is mixed, bring the smallest ones up toward the top tier.
+        targetRam = biggestCurrentServer;
       }
 
-      targetRam = Math.min(targetRam, settings.maxGbRam)
+      targetRam = Math.min(targetRam, settings.maxGbRam);
 
-      purchasedServers = getPurchasedServers(ns)
-      if (targetRam > ns.getServerMaxRam(purchasedServers[0])) {
-        didChange = true
-        while (didChange) {
-          didChange = false
-          purchasedServers = getPurchasedServers(ns)
+      while (true) {
+        purchasedServers = getPurchasedServers(ns);
+        if (purchasedServers.length === 0) break;
 
-          if (targetRam > ns.getServerMaxRam(purchasedServers[0])) {
-            if (ns.getServerMoneyAvailable('home') * settings.totalMoneyAllocation >= targetRam * settings.gbRamCost) {
-              let hostname = `pserv-${targetRam}-${createUUID()}`
+        const candidate = purchasedServers[0];
+        const currentRam = ns.getServerMaxRam(candidate);
 
-              await ns.killall(purchasedServers[0])
-              await ns.sleep(10)
-              const serverDeleted = await ns.deleteServer(purchasedServers[0])
-              if (serverDeleted) {
-                hostname = await ns.purchaseServer(hostname, targetRam)
+        if (targetRam <= currentRam) break;
+        if (moneyBudget(ns) < ns.getPurchasedServerCost(targetRam)) break;
 
-                if (hostname) {
-                  ns.tprint(`[${localeHHMMSS()}] Upgraded: ${purchasedServers[0]} into server: ${hostname} (${targetRam} GB)`)
-
-                  updateServer(ns, serverMap, hostname)
-                  didChange = true
-                }
-              }
-            }
-          }
+        const usedRam = ns.getServerUsedRam(candidate);
+        if (usedRam > 0) {
+          await ns.killall(candidate);
+          await ns.sleep(50);
         }
+
+        const deleted = ns.deleteServer(candidate);
+        if (!deleted) break;
+
+        removeServer(serverMap, candidate);
+
+        let hostname = `pserv-${targetRam}-${createUUID()}`;
+        hostname = ns.purchaseServer(hostname, targetRam);
+
+        if (!hostname) break;
+
+        ns.tprint(
+          `[${localeHHMMSS()}] Upgraded: ${candidate} into server: ${hostname} (${targetRam} GB)`
+        );
+
+        serverMap = ensureServerMap();
+        updateServer(ns, serverMap, hostname);
+        didChange = true;
+
+        // Small delay so other scripts can react to changed fleet.
+        await ns.sleep(25);
       }
     }
 
     if (!didChange) {
-      await ns.sleep(5123)
+      await ns.sleep(5123);
+    } else {
+      await ns.sleep(250);
     }
   }
 }
