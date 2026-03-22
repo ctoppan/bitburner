@@ -8,6 +8,7 @@ const filesToDownload = [
   "common.js",
   "spider.js",
   "find.js",
+  "backdoorHelper.js",
 
   // legacy system (kept for fallback)
   "mainHack.js",
