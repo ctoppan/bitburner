@@ -1,75 +1,113 @@
 # Bitburner scripts collection
 
-Welcome to my log of [Bitburner](https://danielyxie.github.io/bitburner/) scripts. They are written using the in-game language of NetscriptJS, which is a mutation of Javascript.
+Welcome to my log of
+[Bitburner](https://danielyxie.github.io/bitburner/) scripts. They are
+written using the in-game language of NetscriptJS, which is a mutation
+of Javascript.
 
 If you want to play the game itself - click on the name above.
 
+------------------------------------------------------------------------
+
 ## Requirements
 
-The script has been modified to be able to start on 8 GB (the default starting RAM for a player) on the `home` server. Obviously, when you expand the memory available, you'll get extra perks - being able to buy and manage player-owned servers, as well as using spare RAM to do actions.
+The script has been modified to be able to start on 8 GB (the default
+starting RAM for a player) on the `home` server.
 
-The script can be slow to get going, but it'll get there eventually. Getting access to more port hackers will improve the performance.
+As you expand RAM and unlock port programs, performance improves
+significantly. Purchased servers and batching will greatly increase
+income in mid/late game.
+
+------------------------------------------------------------------------
 
 ## Installation
 
-1. Create a new script called `start.js`:
+1.  Create a new script called `start.js`:
 
-nano start.js
+        nano start.js
 
+2.  Paste the following:
 
-2. Paste the following content:
-
-```javascript
+``` javascript
 /** @param {NS} ns **/
 export async function main(ns) {
-if (ns.getHostname() !== "home") {
- throw new Error("Run the script from home");
+  if (ns.getHostname() !== "home") {
+    throw new Error("Run the script from home");
+  }
+
+  const repoBase = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src";
+  const file = "initHacking.js";
+  const url = `${repoBase}/${file}?ts=${Date.now()}`;
+
+  ns.tprint(`[start.js] Refreshing ${file}...`);
+
+  if (ns.fileExists(file, "home")) {
+    ns.rm(file);
+  }
+
+  const ok = await ns.wget(url, file);
+
+  if (!ok || !ns.fileExists(file, "home")) {
+    ns.tprint(`[start.js] Failed to download ${file}`);
+    return;
+  }
+
+  ns.tprint(`[start.js] Launching ${file}...`);
+  ns.spawn(file, 1);
 }
+```
 
-const repoBase = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src";
-const file = "initHacking.js";
-const url = `${repoBase}/${file}?ts=${Date.now()}`;
+3.  Run:
 
-ns.tprint(`[start.js] Downloading ${file} from your fork...`);
+```{=html}
+<!-- -->
+```
+    run start.js
 
-const ok = await ns.wget(url, file);
-if (!ok || !ns.fileExists(file, "home")) {
- ns.tprint(`[start.js] Failed to download ${file}`);
- return;
-}
+------------------------------------------------------------------------
 
-ns.tprint(`[start.js] Launching ${file}...`);
-ns.spawn(file, 1);
-}
+## Important Notes
 
-Exit nano and run:
+-   This fork uses **ctoppan/bitburner** as the source of truth.
+-   All scripts are downloaded from this repo each time `start.js` runs.
+-   Files are refreshed each run.
+-   If you modify scripts locally, commit them here or they will be
+    overwritten.
 
-run start.js
-Important Notes
-This fork uses ctoppan/bitburner as the source of truth instead of the original repository.
-All scripts (including mainHack.js) will be downloaded from this repo when you run start.js.
-If you modify scripts, make sure to commit them here or they may be overwritten on the next run.
-How it Works
-start.js downloads and launches initHacking.js
-initHacking.js downloads all required scripts
-spider.js builds a network map
-mainHack.js handles targeting and hacking
-playerServers.js manages purchased servers
-Customization
+------------------------------------------------------------------------
 
-If you want to tweak behavior:
+## Batching System
 
-Edit mainHack.js to change targeting or batching logic
-Edit playerServers.js to control server upgrades
-Adjust RAM reservations and timing in scripts for performance tuning
-Tips
-Early game: focus on hack XP until your level rises
-Mid game: prioritize high-money servers with good weaken times
-Late game: consider batching (HWGW) for maximum profit
-Troubleshooting
-If scripts seem stuck for long periods:
-Check weaken times (some servers take a long time early on)
-If scripts overwrite your changes:
-Make sure initHacking.js points to this repo, not upstream
-If nothing runs:
-Ensure you are on home before running start.js
+Files included:
+
+-   prepTarget.js
+-   batchHack.js
+-   batchGrow.js
+-   batchWeaken.js
+-   batchController.js
+
+### Usage
+
+Prep target:
+
+    run prepTarget.js rho-construction
+
+Run batcher:
+
+    run batchController.js rho-construction
+
+Optional:
+
+    run batchController.js rho-construction 0.08 200
+
+------------------------------------------------------------------------
+
+## Important
+
+Do NOT run both: - mainHack.js - batchController.js
+
+They will conflict.
+
+------------------------------------------------------------------------
+
+Enjoy breaking the simulation 😉
