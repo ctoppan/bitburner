@@ -6,11 +6,11 @@ export async function main(ns) {
     const args = parseArgs(ns.args);
 
     let state = {
-        hackPct: clamp(args.hackPct, 0.01, 0.15),
-        spacer: clampInt(args.spacer, 60, 400),
+        hackPct: clamp(args.hackPct, 0.01, 0.18),
+        spacer: clampInt(args.spacer, 40, 400),
         homeReserveGb: Math.max(0, Number(args.homeReserveGb) || 128),
-        maxBatches: clampInt(args.maxBatches, 64, 600),
-        maxJobs: 2400,
+        maxBatches: clampInt(args.maxBatches, 64, 800),
+        maxJobs: 3200,
         tuneNote: "init",
         invest: "balanced",
         mode: "BATCH",
@@ -28,12 +28,11 @@ export async function main(ns) {
             const workers = rooted.filter(s => ns.getServerMaxRam(s) > 0);
             const fleet = getFleetRam(ns, workers, state.homeReserveGb);
 
-            const target = pickBestTarget(ns);
+            const target = pickBestTarget(ns, fleet);
             const targetInfo = getTargetInfo(ns, target);
 
             const activeJobs = countActiveBatchJobs(ns, rooted);
-            const batchCounts = countActiveBatches(ns, rooted);
-            const activeBatches = batchCounts.total;
+            const activeBatches = countActiveBatches(ns, rooted).total;
 
             if (shouldTune(state.lastTuneAt, TUNE_INTERVAL)) {
                 tuneState(state, fleet, activeJobs, activeBatches, targetInfo);
@@ -102,20 +101,20 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     const batchPressure = state.maxBatches > 0 ? activeBatches / state.maxBatches : 1;
 
     if (ramFreeRatio > 0.90) {
-        state.hackPct = clamp(state.hackPct * 1.20, 0.03, 0.18);
-        state.spacer = clampInt(Math.floor(state.spacer * 0.90), 40, 400);
-        state.maxBatches = clampInt(state.maxBatches + 20, 64, 600);
-        state.maxJobs = clampInt(state.maxJobs + 200, 800, 4000);
+        state.hackPct = clamp(state.hackPct * 1.18, 0.03, 0.18);
+        state.spacer = clampInt(Math.floor(state.spacer * 0.92), 30, 400);
+        state.maxBatches = clampInt(state.maxBatches + 24, 64, 800);
+        state.maxJobs = clampInt(state.maxJobs + 300, 800, 6000);
         state.invest = "buy_servers";
         state.tuneNote = `ramp_up_ram_available free:${pct(ramFreeRatio)}`;
         return;
     }
 
     if (ramFreeRatio > 0.70) {
-        state.hackPct = clamp(state.hackPct * 1.12, 0.02, 0.16);
-        state.spacer = clampInt(Math.floor(state.spacer * 0.94), 50, 400);
-        state.maxBatches = clampInt(state.maxBatches + 10, 64, 600);
-        state.maxJobs = clampInt(state.maxJobs + 100, 800, 4000);
+        state.hackPct = clamp(state.hackPct * 1.10, 0.02, 0.16);
+        state.spacer = clampInt(Math.floor(state.spacer * 0.95), 35, 400);
+        state.maxBatches = clampInt(state.maxBatches + 12, 64, 800);
+        state.maxJobs = clampInt(state.maxJobs + 150, 800, 6000);
         state.invest = "buy_servers";
         state.tuneNote = `ramp_up free:${pct(ramFreeRatio)}`;
         return;
@@ -123,24 +122,24 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
 
     if (ramFreeRatio < 0.10) {
         state.hackPct = clamp(state.hackPct * 0.88, 0.01, 0.15);
-        state.spacer = clampInt(Math.floor(state.spacer * 1.15), 60, 500);
-        state.maxBatches = clampInt(state.maxBatches - 10, 32, 600);
-        state.maxJobs = clampInt(state.maxJobs - 100, 400, 4000);
+        state.spacer = clampInt(Math.floor(state.spacer * 1.15), 40, 500);
+        state.maxBatches = clampInt(state.maxBatches - 16, 32, 800);
+        state.maxJobs = clampInt(state.maxJobs - 200, 400, 6000);
         state.invest = "save_home";
         state.tuneNote = `backoff_ram_limited free:${pct(ramFreeRatio)}`;
         return;
     }
 
-    if (jobPressure > 0.98 && ramFreeRatio > 0.30) {
-        state.maxJobs = clampInt(state.maxJobs + 200, 800, 4000);
-        state.maxBatches = clampInt(state.maxBatches + 20, 64, 600);
+    if (jobPressure > 0.98 && ramFreeRatio > 0.25) {
+        state.maxJobs = clampInt(state.maxJobs + 300, 800, 6000);
+        state.maxBatches = clampInt(state.maxBatches + 24, 64, 800);
         state.invest = "buy_servers";
         state.tuneNote = `raise_caps jobs:${pct(jobPressure)} free:${pct(ramFreeRatio)}`;
         return;
     }
 
-    if (batchPressure > 0.98 && ramFreeRatio > 0.30) {
-        state.maxBatches = clampInt(state.maxBatches + 20, 64, 600);
+    if (batchPressure > 0.98 && ramFreeRatio > 0.25) {
+        state.maxBatches = clampInt(state.maxBatches + 24, 64, 800);
         state.invest = "buy_servers";
         state.tuneNote = `raise_batch_cap batches:${pct(batchPressure)} free:${pct(ramFreeRatio)}`;
         return;
@@ -283,23 +282,36 @@ function getServerFreeRam(ns, host, homeReserveGb = 0) {
     return Math.max(0, max - used);
 }
 
-function pickBestTarget(ns) {
-    const candidates = getRootedServers(ns)
+function pickBestTarget(ns, fleet) {
+    const servers = getRootedServers(ns)
         .filter(s => ns.getServerMaxMoney(s) > 0)
         .filter(s => ns.getServerRequiredHackingLevel(s) <= ns.getHackingLevel())
         .filter(s => s !== "home");
 
-    if (candidates.length === 0) return "n00dles";
+    if (servers.length === 0) return "n00dles";
 
-    let best = candidates[0];
+    const ramFreeRatio = fleet.total > 0 ? fleet.free / fleet.total : 0;
+    const earlyBias = ramFreeRatio > 0.5;
+
+    let best = servers[0];
     let bestScore = -Infinity;
 
-    for (const s of candidates) {
+    for (const s of servers) {
         const maxMoney = Math.max(1, ns.getServerMaxMoney(s));
         const minSec = Math.max(1, ns.getServerMinSecurityLevel(s));
+        const curSec = Math.max(minSec, ns.getServerSecurityLevel(s));
         const hackTime = Math.max(1, ns.getHackTime(s));
-        const chance = ns.hackAnalyzeChance(s);
-        const score = (maxMoney * chance) / (hackTime * minSec);
+        const chance = Math.max(0.01, ns.hackAnalyzeChance(s));
+        const moneyAvail = ns.getServerMoneyAvailable(s);
+        const moneyRatio = maxMoney > 0 ? moneyAvail / maxMoney : 0;
+        const prepPenalty = (curSec / minSec) * (moneyRatio < 0.75 ? 1.4 : 1.0);
+
+        let score;
+        if (earlyBias) {
+            score = (Math.sqrt(maxMoney) * chance) / (hackTime * prepPenalty);
+        } else {
+            score = (maxMoney * chance) / (hackTime * minSec * prepPenalty);
+        }
 
         if (score > bestScore) {
             bestScore = score;
