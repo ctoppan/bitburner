@@ -6,11 +6,11 @@ export async function main(ns) {
     const args = parseArgs(ns.args);
 
     let state = {
-        hackPct: clamp(args.hackPct, 0.01, 0.12),
-        spacer: clampInt(args.spacer, 80, 400),
+        hackPct: clamp(args.hackPct, 0.01, 0.15),
+        spacer: clampInt(args.spacer, 60, 400),
         homeReserveGb: Math.max(0, Number(args.homeReserveGb) || 128),
-        maxBatches: clampInt(args.maxBatches, 16, 120),
-        maxJobs: 220,
+        maxBatches: clampInt(args.maxBatches, 64, 600),
+        maxJobs: 2400,
         tuneNote: "init",
         invest: "balanced",
         mode: "BATCH",
@@ -19,8 +19,8 @@ export async function main(ns) {
     };
 
     const TUNE_INTERVAL = 30_000;
-    const LOOP_SLEEP = 2_000;
-    const TUNER_PORT = "bb_tuner_state_v1";
+    const LOOP_SLEEP = 1500;
+    const TUNER_KEY = "bb_tuner_state_v1";
 
     while (true) {
         try {
@@ -40,7 +40,7 @@ export async function main(ns) {
                 state.lastTuneAt = Date.now();
             }
 
-            publishTunerState(TUNER_PORT, {
+            publishTunerState(TUNER_KEY, {
                 ts: Date.now(),
                 invest: state.invest,
                 tuneNote: state.tuneNote,
@@ -61,8 +61,7 @@ export async function main(ns) {
                 state.lastTarget = target;
             }
 
-            const summary = buildSummary(ns, state, fleet, target, targetInfo, activeJobs, activeBatches);
-            renderTail(ns, summary);
+            renderTail(ns, buildSummary(ns, state, fleet, target, targetInfo, activeJobs, activeBatches));
 
             if (canLaunchMore(state, activeJobs, activeBatches, fleet)) {
                 await tryLaunchBatch(ns, workers, target, state, targetInfo, fleet);
@@ -71,7 +70,7 @@ export async function main(ns) {
             await ns.sleep(LOOP_SLEEP);
         } catch (err) {
             ns.print(`ERROR: ${String(err)}`);
-            await ns.sleep(5_000);
+            await ns.sleep(5000);
         }
     }
 }
@@ -102,37 +101,48 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     const jobPressure = state.maxJobs > 0 ? activeJobs / state.maxJobs : 1;
     const batchPressure = state.maxBatches > 0 ? activeBatches / state.maxBatches : 1;
 
-    if (ramFreeRatio > 0.85) {
-        state.hackPct = clamp(state.hackPct * 1.30, 0.02, 0.15);
-        state.spacer = clampInt(Math.floor(state.spacer * 0.82), 60, 400);
-        state.maxBatches = clampInt(state.maxBatches + 4, 16, 120);
+    if (ramFreeRatio > 0.90) {
+        state.hackPct = clamp(state.hackPct * 1.20, 0.03, 0.18);
+        state.spacer = clampInt(Math.floor(state.spacer * 0.90), 40, 400);
+        state.maxBatches = clampInt(state.maxBatches + 20, 64, 600);
+        state.maxJobs = clampInt(state.maxJobs + 200, 800, 4000);
         state.invest = "buy_servers";
         state.tuneNote = `ramp_up_ram_available free:${pct(ramFreeRatio)}`;
         return;
     }
 
-    if (ramFreeRatio > 0.60) {
-        state.hackPct = clamp(state.hackPct * 1.18, 0.02, 0.15);
-        state.spacer = clampInt(Math.floor(state.spacer * 0.88), 70, 400);
-        state.maxBatches = clampInt(state.maxBatches + 2, 16, 120);
+    if (ramFreeRatio > 0.70) {
+        state.hackPct = clamp(state.hackPct * 1.12, 0.02, 0.16);
+        state.spacer = clampInt(Math.floor(state.spacer * 0.94), 50, 400);
+        state.maxBatches = clampInt(state.maxBatches + 10, 64, 600);
+        state.maxJobs = clampInt(state.maxJobs + 100, 800, 4000);
         state.invest = "buy_servers";
         state.tuneNote = `ramp_up free:${pct(ramFreeRatio)}`;
         return;
     }
 
-    if (ramFreeRatio < 0.15) {
-        state.hackPct = clamp(state.hackPct * 0.85, 0.01, 0.12);
-        state.spacer = clampInt(Math.floor(state.spacer * 1.20), 80, 500);
-        state.maxBatches = clampInt(state.maxBatches - 2, 12, 120);
+    if (ramFreeRatio < 0.10) {
+        state.hackPct = clamp(state.hackPct * 0.88, 0.01, 0.15);
+        state.spacer = clampInt(Math.floor(state.spacer * 1.15), 60, 500);
+        state.maxBatches = clampInt(state.maxBatches - 10, 32, 600);
+        state.maxJobs = clampInt(state.maxJobs - 100, 400, 4000);
         state.invest = "save_home";
         state.tuneNote = `backoff_ram_limited free:${pct(ramFreeRatio)}`;
         return;
     }
 
-    if (jobPressure > 0.98 || batchPressure > 0.98) {
-        state.spacer = clampInt(Math.floor(state.spacer * 1.08), 80, 450);
-        state.invest = ramFreeRatio > 0.35 ? "balanced" : "save_home";
-        state.tuneNote = `soft_backoff_concurrency jobs:${pct(jobPressure)} batches:${pct(batchPressure)}`;
+    if (jobPressure > 0.98 && ramFreeRatio > 0.30) {
+        state.maxJobs = clampInt(state.maxJobs + 200, 800, 4000);
+        state.maxBatches = clampInt(state.maxBatches + 20, 64, 600);
+        state.invest = "buy_servers";
+        state.tuneNote = `raise_caps jobs:${pct(jobPressure)} free:${pct(ramFreeRatio)}`;
+        return;
+    }
+
+    if (batchPressure > 0.98 && ramFreeRatio > 0.30) {
+        state.maxBatches = clampInt(state.maxBatches + 20, 64, 600);
+        state.invest = "buy_servers";
+        state.tuneNote = `raise_batch_cap batches:${pct(batchPressure)} free:${pct(ramFreeRatio)}`;
         return;
     }
 
@@ -147,7 +157,7 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
 }
 
 function canLaunchMore(state, activeJobs, activeBatches, fleet) {
-    if (fleet.free < 16) return false;
+    if (fleet.free < 256) return false;
     if (activeJobs >= state.maxJobs) return false;
     if (activeBatches >= state.maxBatches) return false;
     return true;
@@ -156,18 +166,19 @@ function canLaunchMore(state, activeJobs, activeBatches, fleet) {
 async function tryLaunchBatch(ns, workers, target, state, targetInfo, fleet) {
     const batchId = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     const moneyMax = Math.max(1, targetInfo.moneyMax);
-    const hackFraction = clamp(state.hackPct, 0.02, 0.15);
+    const hackFraction = clamp(state.hackPct, 0.03, 0.18);
 
-    let hackThreads = Math.max(2, Math.floor(ns.hackAnalyzeThreads(target, moneyMax * hackFraction) || 2));
+    let hackThreads = Math.max(4, Math.floor(ns.hackAnalyzeThreads(target, moneyMax * hackFraction) || 4));
     const growMultiplier = 1 / Math.max(0.01, (1 - hackFraction));
-    let growThreads = Math.max(10, Math.ceil(ns.growthAnalyze(target, growMultiplier) || 10));
+    let growThreads = Math.max(20, Math.ceil(ns.growthAnalyze(target, growMultiplier) || 20));
     let weakenHackThreads = Math.max(1, Math.ceil((hackThreads * 0.002) / 0.05));
     let weakenGrowThreads = Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
 
-    const ramScale = clamp(Math.floor(fleet.free / 1024), 1, 64);
-    if (fleet.free > 2048) {
-        hackThreads = Math.max(2, Math.floor(hackThreads * Math.min(ramScale, 8)));
-        growThreads = Math.max(10, Math.floor(growThreads * Math.min(ramScale, 8)));
+    const ramScale = clamp(Math.floor(fleet.free / 2048), 1, 32);
+    if (fleet.free > 4096) {
+        const scale = Math.min(ramScale, 12);
+        hackThreads = Math.max(4, Math.floor(hackThreads * scale));
+        growThreads = Math.max(20, Math.floor(growThreads * scale));
         weakenHackThreads = Math.max(1, Math.ceil((hackThreads * 0.002) / 0.05));
         weakenGrowThreads = Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
     }
@@ -192,9 +203,7 @@ async function tryLaunchBatch(ns, workers, target, state, targetInfo, fleet) {
 
     for (const job of jobs) {
         const launched = launchDistributed(ns, workers, job.script, job.threads, job.args, state.homeReserveGb);
-        if (!launched) {
-            return false;
-        }
+        if (!launched) return false;
     }
 
     return true;
@@ -215,14 +224,10 @@ function launchDistributed(ns, workers, script, threads, args, homeReserveGb) {
         const use = Math.min(maxThreads, remaining);
         if (use <= 0) continue;
 
-        if (host !== "home") {
-            ns.scp(script, host, "home");
-        }
+        if (host !== "home") ns.scp(script, host, "home");
 
         const pid = ns.exec(script, host, use, ...args);
-        if (pid !== 0) {
-            remaining -= use;
-        }
+        if (pid !== 0) remaining -= use;
 
         if (remaining <= 0) return true;
     }
@@ -264,11 +269,7 @@ function getFleetRam(ns, servers, homeReserveGb) {
         used += use;
     }
 
-    return {
-        total,
-        used,
-        free: Math.max(0, total - used),
-    };
+    return { total, used, free: Math.max(0, total - used) };
 }
 
 function getServerFreeRam(ns, host, homeReserveGb = 0) {
@@ -331,9 +332,7 @@ function countActiveBatchJobs(ns, servers) {
 
     for (const s of servers) {
         for (const proc of ns.ps(s)) {
-            if (names.has(proc.filename)) {
-                total++;
-            }
+            if (names.has(proc.filename)) total++;
         }
     }
 
@@ -348,10 +347,7 @@ function countActiveBatches(ns, servers) {
             if (!["batchHack.js", "batchGrow.js", "batchWeaken.js"].includes(proc.filename)) continue;
             const args = proc.args || [];
             const id = typeof args[2] === "string" ? args[2] : typeof args[1] === "string" ? args[1] : null;
-            if (id) {
-                const normalized = String(id).replace(/-(H|W1|G|W2)$/, "");
-                ids.add(normalized);
-            }
+            if (id) ids.add(String(id).replace(/-(H|W1|G|W2)$/, ""));
         }
     }
 
@@ -382,9 +378,7 @@ function buildSummary(ns, state, fleet, target, targetInfo, activeJobs, activeBa
 
 function renderTail(ns, lines) {
     ns.clearLog();
-    for (const line of lines) {
-        ns.print(line);
-    }
+    for (const line of lines) ns.print(line);
 }
 
 function pct(v) {
