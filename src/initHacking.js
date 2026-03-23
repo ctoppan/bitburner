@@ -119,21 +119,9 @@ export async function main(ns) {
     ns.run("playerServers.js", 1);
   }
 
-  if (stockEnabled && !ns.isRunning("stockTrader.js", "home")) {
-    const homeTarget = getHomeUpgradeTarget();
+  if (stockEnabled) {
     ns.tprint(
-      `[${localeHHMMSS()}] Starting stockTrader.js with home target ${ns.formatNumber(homeTarget, 3)}`
-    );
-    ns.run(
-      "stockTrader.js",
-      1,
-      0.20,   // reservePct
-      5e9,    // minCashReserve
-      0.25,   // tradeBudgetPct
-      0.05,   // minForecastEdge
-      6000,   // pollMs
-      homeTarget,
-      HOME_RESERVE_BUFFER
+      `[${localeHHMMSS()}] Stock API detected, but stockTrader.js auto-start is disabled for now`
     );
   }
 }
