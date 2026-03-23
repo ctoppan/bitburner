@@ -1,16 +1,16 @@
 /** @param {NS} ns **/
 export async function main(ns) {
     ns.disableLog("ALL");
-    ns.tail();
+    try { ns.ui.openTail(); } catch {}
 
     const args = parseArgs(ns.args);
 
     let state = {
-        hackPct: clamp(args.hackPct, 0.01, 0.08),
+        hackPct: clamp(args.hackPct, 0.01, 0.12),
         spacer: clampInt(args.spacer, 80, 400),
         homeReserveGb: Math.max(0, Number(args.homeReserveGb) || 128),
-        maxBatches: clampInt(args.maxBatches, 16, 80),
-        maxJobs: 160,
+        maxBatches: clampInt(args.maxBatches, 16, 120),
+        maxJobs: 220,
         tuneNote: "init",
         invest: "balanced",
         mode: "BATCH",
@@ -40,7 +40,7 @@ export async function main(ns) {
                 state.lastTuneAt = Date.now();
             }
 
-            publishTunerState(ns, TUNER_PORT, {
+            publishTunerState(TUNER_PORT, {
                 ts: Date.now(),
                 invest: state.invest,
                 tuneNote: state.tuneNote,
@@ -65,7 +65,7 @@ export async function main(ns) {
             renderTail(ns, summary);
 
             if (canLaunchMore(state, activeJobs, activeBatches, fleet)) {
-                await tryLaunchBatch(ns, workers, target, state, targetInfo, batchCounts);
+                await tryLaunchBatch(ns, workers, target, state, targetInfo, fleet);
             }
 
             await ns.sleep(LOOP_SLEEP);
@@ -102,28 +102,28 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     const jobPressure = state.maxJobs > 0 ? activeJobs / state.maxJobs : 1;
     const batchPressure = state.maxBatches > 0 ? activeBatches / state.maxBatches : 1;
 
-    if (ramFreeRatio > 0.70) {
-        state.hackPct = clamp(state.hackPct * 1.20, 0.01, 0.08);
-        state.spacer = clampInt(Math.floor(state.spacer * 0.85), 80, 400);
-        state.maxBatches = clampInt(state.maxBatches + 3, 16, 80);
+    if (ramFreeRatio > 0.85) {
+        state.hackPct = clamp(state.hackPct * 1.30, 0.02, 0.15);
+        state.spacer = clampInt(Math.floor(state.spacer * 0.82), 60, 400);
+        state.maxBatches = clampInt(state.maxBatches + 4, 16, 120);
         state.invest = "buy_servers";
         state.tuneNote = `ramp_up_ram_available free:${pct(ramFreeRatio)}`;
         return;
     }
 
-    if (ramFreeRatio > 0.50) {
-        state.hackPct = clamp(state.hackPct * 1.10, 0.01, 0.08);
-        state.spacer = clampInt(Math.floor(state.spacer * 0.90), 80, 400);
-        state.maxBatches = clampInt(state.maxBatches + 2, 16, 80);
+    if (ramFreeRatio > 0.60) {
+        state.hackPct = clamp(state.hackPct * 1.18, 0.02, 0.15);
+        state.spacer = clampInt(Math.floor(state.spacer * 0.88), 70, 400);
+        state.maxBatches = clampInt(state.maxBatches + 2, 16, 120);
         state.invest = "buy_servers";
         state.tuneNote = `ramp_up free:${pct(ramFreeRatio)}`;
         return;
     }
 
     if (ramFreeRatio < 0.15) {
-        state.hackPct = clamp(state.hackPct * 0.85, 0.01, 0.08);
+        state.hackPct = clamp(state.hackPct * 0.85, 0.01, 0.12);
         state.spacer = clampInt(Math.floor(state.spacer * 1.20), 80, 500);
-        state.maxBatches = clampInt(state.maxBatches - 2, 12, 80);
+        state.maxBatches = clampInt(state.maxBatches - 2, 12, 120);
         state.invest = "save_home";
         state.tuneNote = `backoff_ram_limited free:${pct(ramFreeRatio)}`;
         return;
@@ -147,22 +147,30 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
 }
 
 function canLaunchMore(state, activeJobs, activeBatches, fleet) {
-    if (fleet.free < 8) return false;
+    if (fleet.free < 16) return false;
     if (activeJobs >= state.maxJobs) return false;
     if (activeBatches >= state.maxBatches) return false;
     return true;
 }
 
-async function tryLaunchBatch(ns, workers, target, state, targetInfo, batchCounts) {
+async function tryLaunchBatch(ns, workers, target, state, targetInfo, fleet) {
     const batchId = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     const moneyMax = Math.max(1, targetInfo.moneyMax);
-    const hackFraction = clamp(state.hackPct, 0.01, 0.08);
+    const hackFraction = clamp(state.hackPct, 0.02, 0.15);
 
-    const hackThreads = Math.max(1, Math.floor(ns.hackAnalyzeThreads(target, moneyMax * hackFraction) || 1));
+    let hackThreads = Math.max(2, Math.floor(ns.hackAnalyzeThreads(target, moneyMax * hackFraction) || 2));
     const growMultiplier = 1 / Math.max(0.01, (1 - hackFraction));
-    const growThreads = Math.max(1, Math.ceil(ns.growthAnalyze(target, growMultiplier) || 1));
-    const weakenHackThreads = Math.max(1, Math.ceil((hackThreads * 0.002) / 0.05));
-    const weakenGrowThreads = Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
+    let growThreads = Math.max(10, Math.ceil(ns.growthAnalyze(target, growMultiplier) || 10));
+    let weakenHackThreads = Math.max(1, Math.ceil((hackThreads * 0.002) / 0.05));
+    let weakenGrowThreads = Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
+
+    const ramScale = clamp(Math.floor(fleet.free / 1024), 1, 64);
+    if (fleet.free > 2048) {
+        hackThreads = Math.max(2, Math.floor(hackThreads * Math.min(ramScale, 8)));
+        growThreads = Math.max(10, Math.floor(growThreads * Math.min(ramScale, 8)));
+        weakenHackThreads = Math.max(1, Math.ceil((hackThreads * 0.002) / 0.05));
+        weakenGrowThreads = Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
+    }
 
     const weakenTime = ns.getWeakenTime(target);
     const growTime = ns.getGrowTime(target);
@@ -183,7 +191,7 @@ async function tryLaunchBatch(ns, workers, target, state, targetInfo, batchCount
     ];
 
     for (const job of jobs) {
-        const launched = launchDistributed(ns, workers, job.script, job.threads, job.args);
+        const launched = launchDistributed(ns, workers, job.script, job.threads, job.args, state.homeReserveGb);
         if (!launched) {
             return false;
         }
@@ -192,15 +200,15 @@ async function tryLaunchBatch(ns, workers, target, state, targetInfo, batchCount
     return true;
 }
 
-function launchDistributed(ns, workers, script, threads, args) {
+function launchDistributed(ns, workers, script, threads, args, homeReserveGb) {
     let remaining = threads;
     const ramPerThread = ns.getScriptRam(script, "home");
     if (ramPerThread <= 0) return false;
 
-    const ordered = [...workers].sort((a, b) => getServerFreeRam(ns, b) - getServerFreeRam(ns, a));
+    const ordered = [...workers].sort((a, b) => getServerFreeRam(ns, b, homeReserveGb) - getServerFreeRam(ns, a, homeReserveGb));
 
     for (const host of ordered) {
-        const free = getServerFreeRam(ns, host);
+        const free = getServerFreeRam(ns, host, homeReserveGb);
         const maxThreads = Math.floor(free / ramPerThread);
         if (maxThreads <= 0) continue;
 
@@ -263,8 +271,15 @@ function getFleetRam(ns, servers, homeReserveGb) {
     };
 }
 
-function getServerFreeRam(ns, host) {
-    return Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
+function getServerFreeRam(ns, host, homeReserveGb = 0) {
+    let max = ns.getServerMaxRam(host);
+    const used = ns.getServerUsedRam(host);
+
+    if (host === "home") {
+        max = Math.max(0, max - homeReserveGb);
+    }
+
+    return Math.max(0, max - used);
 }
 
 function pickBestTarget(ns) {
@@ -332,9 +347,9 @@ function countActiveBatches(ns, servers) {
         for (const proc of ns.ps(s)) {
             if (!["batchHack.js", "batchGrow.js", "batchWeaken.js"].includes(proc.filename)) continue;
             const args = proc.args || [];
-            const id = typeof args[1] === "string" ? args[1] : typeof args[2] === "string" ? args[2] : null;
+            const id = typeof args[2] === "string" ? args[2] : typeof args[1] === "string" ? args[1] : null;
             if (id) {
-                const normalized = String(id).split("-")[0];
+                const normalized = String(id).replace(/-(H|W1|G|W2)$/, "");
                 ids.add(normalized);
             }
         }
@@ -343,7 +358,7 @@ function countActiveBatches(ns, servers) {
     return { total: ids.size };
 }
 
-function publishTunerState(ns, key, payload) {
+function publishTunerState(key, payload) {
     try {
         if (typeof localStorage !== "undefined") {
             localStorage.setItem(key, JSON.stringify(payload));
