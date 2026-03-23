@@ -23,7 +23,11 @@ const settings = {
 
   keys: {
     serverMap: 'BB_SERVER_MAP',
+    tunerState: 'BB_TUNER_STATE',
   },
+
+  planLogIntervalMs: 120000,
+  planMoneyBucket: 25e9,
 };
 
 function getItem(key) {
@@ -33,6 +37,58 @@ function getItem(key) {
 
 function setItem(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+
+function getTunerState() {
+  return getItem(settings.keys.tunerState) || null;
+}
+
+function getInvestmentPolicy(ns) {
+  const tuner = getTunerState();
+  const stale = !tuner || Date.now() - Number(tuner.ts || 0) > 120000;
+
+  const policy = {
+    mode: 'balanced',
+    reserveMultiplier: 0.75,
+    spendRatio: 0.9,
+    minPurchaseRam: settings.minGbRam,
+    minUpgradeMultiplier: settings.minUpgradeMultiplier,
+    summary: 'balanced-default',
+  };
+
+  if (stale) return policy;
+
+  if (tuner.investmentMode === 'buy_servers') {
+    return {
+      mode: 'buy_servers',
+      reserveMultiplier: 0.35,
+      spendRatio: 0.98,
+      minPurchaseRam: settings.minGbRam,
+      minUpgradeMultiplier: 1.5,
+      summary: `buy_servers (${tuner.detail || 'ram-pressure'})`,
+    };
+  }
+
+  if (tuner.investmentMode === 'save_home') {
+    return {
+      mode: 'save_home',
+      reserveMultiplier: 1.15,
+      spendRatio: 0.55,
+      minPurchaseRam: settings.minGbRam * 2,
+      minUpgradeMultiplier: 2,
+      summary: `save_home (${tuner.detail || 'save'})`,
+    };
+  }
+
+  return {
+    mode: 'balanced',
+    reserveMultiplier: 0.75,
+    spendRatio: 0.9,
+    minPurchaseRam: settings.minGbRam,
+    minUpgradeMultiplier: settings.minUpgradeMultiplier,
+    summary: `balanced (${tuner.detail || 'steady'})`,
+  };
 }
 
 function localeHHMMSS(ms = 0) {
@@ -168,45 +224,47 @@ function getHomeUpgradePlan(ns) {
   return { target, cost, ramCost, coreCost };
 }
 
-function reserveForHome(ns) {
+function reserveForHome(ns, policy = null) {
   const plan = getHomeUpgradePlan(ns);
-  return Math.ceil(plan.cost * settings.homeReserveBufferMultiplier);
+  const effectivePolicy = policy || getInvestmentPolicy(ns);
+  return Math.ceil(plan.cost * effectivePolicy.reserveMultiplier);
 }
 
-function moneyBudget(ns) {
+function moneyBudget(ns, policy = null) {
   const money = ns.getServerMoneyAvailable('home');
   const plan = getHomeUpgradePlan(ns);
+  const effectivePolicy = policy || getInvestmentPolicy(ns);
 
-  if (money >= plan.cost) return 0;
+  if (money >= plan.cost && effectivePolicy.mode !== 'buy_servers') return 0;
 
-  const reserve = reserveForHome(ns);
+  const reserve = reserveForHome(ns, effectivePolicy);
   const spendable = money - reserve;
 
   if (spendable <= 0) return 0;
-  return spendable * settings.totalMoneyAllocation;
+  return spendable * effectivePolicy.spendRatio;
 }
 
-function highestAffordablePurchaseRam(ns, minRam, maxRam) {
+function highestAffordablePurchaseRam(ns, minRam, maxRam, policy = null) {
   let ram = Math.max(settings.minGbRam, minRam);
 
-  if (moneyBudget(ns) < ns.getPurchasedServerCost(ram)) {
+  if (moneyBudget(ns, policy) < ns.getPurchasedServerCost(ram)) {
     return 0;
   }
 
-  while (ram * 2 <= maxRam && moneyBudget(ns) >= ns.getPurchasedServerCost(ram * 2)) {
+  while (ram * 2 <= maxRam && moneyBudget(ns, policy) >= ns.getPurchasedServerCost(ram * 2)) {
     ram *= 2;
   }
 
   return ram;
 }
 
-function highestAffordableUpgradeRam(ns, host, currentRam, maxRam) {
+function highestAffordableUpgradeRam(ns, host, currentRam, maxRam, policy = null) {
   let candidate = currentRam * 2;
   let best = currentRam;
 
   while (candidate <= maxRam) {
     const cost = ns.getPurchasedServerUpgradeCost(host, candidate);
-    if (moneyBudget(ns) >= cost) {
+    if (moneyBudget(ns, policy) >= cost) {
       best = candidate;
       candidate *= 2;
     } else {
@@ -244,6 +302,21 @@ function maybeRemindHomeUpgrade(ns) {
   return false;
 }
 
+
+function shouldPrintPlan(lastLog, plan) {
+  const now = Date.now();
+  const moneyBucket = Math.floor(plan.money / settings.planMoneyBucket);
+  const canAfford = plan.money >= plan.targetCost;
+
+  if (!lastLog) return { should: true, moneyBucket, canAfford };
+  if (lastLog.target !== plan.target) return { should: true, moneyBucket, canAfford };
+  if (lastLog.policy !== plan.policy) return { should: true, moneyBucket, canAfford };
+  if (lastLog.canAfford !== canAfford) return { should: true, moneyBucket, canAfford };
+  if (lastLog.moneyBucket !== moneyBucket) return { should: true, moneyBucket, canAfford };
+  if (now - lastLog.lastPrintAt >= settings.planLogIntervalMs) return { should: true, moneyBucket, canAfford };
+  return { should: false, moneyBucket, canAfford };
+}
+
 export async function main(ns) {
   ns.tprint(`[${localeHHMMSS()}] Starting playerServers.js`);
 
@@ -254,7 +327,7 @@ export async function main(ns) {
   }
 
   const maxGbRam = ns.getPurchasedServerMaxRam();
-  let lastPlanSummary = '';
+  let lastPlanLog = null;
 
   while (true) {
     let didChange = false;
@@ -263,22 +336,37 @@ export async function main(ns) {
 
     const money = ns.getServerMoneyAvailable('home');
     const homePlan = getHomeUpgradePlan(ns);
-    const reserve = reserveForHome(ns);
-    const budget = moneyBudget(ns);
+    const policy = getInvestmentPolicy(ns);
+    const reserve = reserveForHome(ns, policy);
+    const budget = moneyBudget(ns, policy);
 
     maybeRemindHomeUpgrade(ns);
 
-    const planSummary =
-      `home target=${homePlan.target}, ` +
-      `ramCost=${formatMoney(ns, homePlan.ramCost)}, ` +
-      `coreCost=${formatMoney(ns, homePlan.coreCost)}, ` +
-      `reserve=${formatMoney(ns, reserve)}, ` +
-      `budget=${formatMoney(ns, budget)}, ` +
-      `money=${formatMoney(ns, money)}`;
+    const planInfo = {
+      target: homePlan.target,
+      targetCost: homePlan.cost,
+      money,
+      policy: policy.summary,
+    };
+    const logDecision = shouldPrintPlan(lastPlanLog, planInfo);
 
-    if (planSummary !== lastPlanSummary) {
-      ns.tprint(`[${localeHHMMSS()}] ${planSummary}`);
-      lastPlanSummary = planSummary;
+    if (logDecision.should) {
+      ns.tprint(
+        `[${localeHHMMSS()}] home target=${homePlan.target}, ` +
+        `ramCost=${formatMoney(ns, homePlan.ramCost)}, ` +
+        `coreCost=${formatMoney(ns, homePlan.coreCost)}, ` +
+        `reserve=${formatMoney(ns, reserve)}, ` +
+        `budget=${formatMoney(ns, budget)}, ` +
+        `money=${formatMoney(ns, money)}, ` +
+        `policy=${policy.summary}`
+      );
+      lastPlanLog = {
+        target: homePlan.target,
+        policy: policy.summary,
+        canAfford: logDecision.canAfford,
+        moneyBucket: logDecision.moneyBucket,
+        lastPrintAt: Date.now(),
+      };
     }
 
     let purchasedServers = getPurchasedServers(ns);
@@ -295,8 +383,9 @@ export async function main(ns) {
 
       const targetRam = highestAffordablePurchaseRam(
         ns,
-        Math.max(settings.minGbRam, smallestCurrentServer),
-        maxGbRam
+        Math.max(policy.minPurchaseRam, smallestCurrentServer),
+        maxGbRam,
+        policy
       );
 
       if (targetRam > 0 && budget >= ns.getPurchasedServerCost(targetRam)) {
@@ -328,11 +417,11 @@ export async function main(ns) {
         return;
       }
 
-      const targetRam = highestAffordableUpgradeRam(ns, smallestServer, currentRam, maxGbRam);
+      const targetRam = highestAffordableUpgradeRam(ns, smallestServer, currentRam, maxGbRam, policy);
 
       if (
         targetRam > currentRam &&
-        targetRam >= currentRam * settings.minUpgradeMultiplier
+        targetRam >= currentRam * policy.minUpgradeMultiplier
       ) {
         const usedRam = ns.getServerUsedRam(smallestServer);
         if (usedRam > 0) {

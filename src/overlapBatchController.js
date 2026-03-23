@@ -1,3 +1,13 @@
+const SHARED_KEYS = {
+  tunerState: "BB_TUNER_STATE",
+};
+
+function setSharedItem(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
+
 /** @param {NS} ns **/
 export async function main(ns) {
   const manualTarget = String(ns.args[0] ?? "");
@@ -668,15 +678,80 @@ function getFleetRamStats(ns, hosts, homeReserve) {
   };
 }
 
+function publishTunerState(target, mode, tuner, ramStats, active) {
+  const activeJobsCap = Math.max(1, tuner?.maxActiveJobs || 1);
+  const activeBatchesCap = Math.max(1, tuner?.maxActiveBatches || 1);
+  const freeRamRatio = ramStats.total > 0 ? ramStats.free / ramStats.total : 0;
+  const jobRatio = (active?.activeJobs || 0) / activeJobsCap;
+  const batchRatio = (active?.activeBatches || 0) / activeBatchesCap;
+
+  let investmentMode = "balanced";
+  let detail = "steady";
+
+  if (String(mode).startsWith("PREP_")) {
+    investmentMode = "buy_servers";
+    detail = "prep-needs-ram";
+  } else if (freeRamRatio < 0.12 || String(mode).includes("PARTIAL_RAM") || String(mode).includes("WAIT_RAM")) {
+    investmentMode = "buy_servers";
+    detail = "ram-pressure";
+  } else if (jobRatio > 0.92 || batchRatio > 0.92) {
+    investmentMode = "save_home";
+    detail = "concurrency-bound";
+  } else if (freeRamRatio > 0.40 && jobRatio < 0.70 && batchRatio < 0.70) {
+    investmentMode = "save_home";
+    detail = "headroom-save-home";
+  }
+
+  setSharedItem(SHARED_KEYS.tunerState, {
+    ts: Date.now(),
+    target,
+    mode,
+    investmentMode,
+    detail,
+    hackPct: tuner?.hackPct ?? 0,
+    spacer: tuner?.spacer ?? 0,
+    maxBatches: tuner?.maxBatches ?? 0,
+    freeRamRatio,
+    freeRam: ramStats.free,
+    totalRam: ramStats.total,
+    jobRatio,
+    batchRatio,
+    activeJobs: active?.activeJobs || 0,
+    activeBatches: active?.activeBatches || 0,
+  });
+}
+
+function describeInvestmentMode(mode, ramStats, active, tuner) {
+  const freeRamRatio = ramStats.total > 0 ? ramStats.free / ramStats.total : 0;
+  const activeJobsCap = Math.max(1, tuner?.maxActiveJobs || 1);
+  const activeBatchesCap = Math.max(1, tuner?.maxActiveBatches || 1);
+  const jobRatio = (active?.activeJobs || 0) / activeJobsCap;
+  const batchRatio = (active?.activeBatches || 0) / activeBatchesCap;
+
+  if (String(mode).startsWith("PREP_") || freeRamRatio < 0.12 || String(mode).includes("PARTIAL_RAM") || String(mode).includes("WAIT_RAM")) {
+    return `buy_servers free:${pct(freeRamRatio)}`;
+  }
+  if (jobRatio > 0.92 || batchRatio > 0.92) {
+    return `save_home concurrency`;
+  }
+  if (freeRamRatio > 0.40 && jobRatio < 0.70 && batchRatio < 0.70) {
+    return `save_home headroom`;
+  }
+  return `balanced free:${pct(freeRamRatio)}`;
+}
+
 function showStatus(ns, target, money, maxMoney, sec, minSec, mode, template = null, tuner = null, hosts = null, homeReserve = 0) {
   ns.clearLog();
+  const ramStats = hosts ? getFleetRamStats(ns, hosts, homeReserve) : { total: 0, free: 0 };
+  const active = hosts ? summarizeActiveBatches(ns, hosts, target) : { activeJobs: 0, activeBatches: 0 };
+  if (tuner && hosts) publishTunerState(target, mode, tuner, ramStats, active);
   ns.print(`Mode: ${mode}`);
   if (tuner) {
     ns.print(`Tune: ${tuner.enabled ? 'dynamic' : 'off'} hpct:${(tuner.hackPct * 100).toFixed(2)} spacer:${Math.round(tuner.spacer)} maxB:${Math.round(tuner.maxBatches)}`);
+    ns.print(`Invest: ${describeInvestmentMode(mode, ramStats, active, tuner)}`);
     ns.print(`Tune note: ${tuner.lastReason}`);
   }
   if (hosts) {
-    const ramStats = getFleetRamStats(ns, hosts, homeReserve);
     ns.print(`Fleet RAM: ${ns.formatRam(ramStats.free)} free / ${ns.formatRam(ramStats.total)} total`);
   }
   ns.print(`Target: ${target}`);
