@@ -34,7 +34,7 @@ function canDoCrime(ns) {
   return !!(singularity && typeof singularity.commitCrime === 'function');
 }
 
-function isBusy(ns) {
+function playerHasOngoingWork(ns) {
   const singularity = getSingularity(ns);
 
   try {
@@ -44,8 +44,8 @@ function isBusy(ns) {
   } catch {}
 
   try {
-    if (typeof ns.isBusy === 'function') {
-      return ns.isBusy();
+    if (singularity && typeof singularity.isWorking === 'function') {
+      return singularity.isWorking();
     }
   } catch {}
 
@@ -140,7 +140,7 @@ export async function main(ns) {
     const crimesStop = getItem(settings.keys.crimesStop);
     if (crimesStop || Date.now() > endTime) break;
 
-    while (isBusy(ns)) {
+    while (playerHasOngoingWork(ns)) {
       await ns.sleep(200);
     }
 

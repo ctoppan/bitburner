@@ -18,8 +18,9 @@ const settings = {
   // hover right below your goal.
   homeReserveBufferMultiplier: 1.1,
 
-  // Reminder behavior
+  // Manual home-upgrade reminders are disabled by default to avoid repeated popup spam.
   canAffordReminderMs: 60000,
+  enableHomeUpgradeReminder: false,
 
   keys: {
     serverMap: "BB_SERVER_MAP",
@@ -193,6 +194,8 @@ function formatMoney(ns, amount) {
 let lastReminderAt = 0;
 
 function maybeRemindHomeUpgrade(ns) {
+  if (!settings.enableHomeUpgradeReminder) return false;
+
   const now = Date.now();
   if (now - lastReminderAt < settings.canAffordReminderMs) return false;
 
@@ -200,7 +203,7 @@ function maybeRemindHomeUpgrade(ns) {
   const plan = getHomeUpgradePlan();
 
   if (money >= plan.cost) {
-    ns.tprint(
+    ns.print(
       `[${localeHHMMSS()}] HOME UPGRADE READY: Buy home ${plan.target} manually ` +
       `(targetCost=${formatMoney(ns, plan.cost)}, cash=${formatMoney(ns, money)})`
     );
