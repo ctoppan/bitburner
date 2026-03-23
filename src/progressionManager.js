@@ -6,6 +6,7 @@ const settings = {
     money: 'commitCrime.js',
   },
   gangKarmaThreshold: -54000,
+<<<<<<< HEAD
   crimeFailureCooldownMs: 120000,
   crimeFailureDisableThreshold: 3,
   keys: {
@@ -14,6 +15,8 @@ const settings = {
     crimeAutomationDisabled: 'BB_CRIME_AUTOMATION_DISABLED',
     crimeAutomationDisabledNoticeAt: 'BB_CRIME_AUTOMATION_DISABLED_NOTICE_AT',
   },
+=======
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 };
 
 function localeHHMMSS(ms = 0) {
@@ -29,6 +32,7 @@ function getSingularity(ns) {
   }
 }
 
+<<<<<<< HEAD
 function getItem(key) {
   const item = localStorage.getItem(key);
   return item ? JSON.parse(item) : undefined;
@@ -38,6 +42,8 @@ function setItem(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+=======
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 function canUseGangApi(ns) {
   try {
     return !!ns.gang;
@@ -161,6 +167,7 @@ function selectCrimeScript(ns) {
   return settings.crimeScripts.money;
 }
 
+<<<<<<< HEAD
 function getCrimeFailureUntil() {
   return Number(getItem(settings.keys.crimeFailureUntil) || 0);
 }
@@ -222,6 +229,11 @@ function ensureCrimeLoop(ns) {
     return;
   }
   if (shouldBackOffCrime(ns)) return;
+=======
+function ensureCrimeLoop(ns) {
+  if (!canCommitCrimes(ns)) return;
+  if (ns.scriptRunning('gangManager.js', 'home')) return;
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 
   const wantedScript = selectCrimeScript(ns);
   const otherScript = wantedScript === settings.crimeScripts.karma ? settings.crimeScripts.money : settings.crimeScripts.karma;
@@ -232,13 +244,17 @@ function ensureCrimeLoop(ns) {
     const started = startScriptIfNotRunning(ns, wantedScript);
     if (started) {
       ns.tprint(`[${localeHHMMSS()}] Starting crime progression loop with ${wantedScript}`);
+<<<<<<< HEAD
     } else {
       noteCrimeFailure();
       printCrimeAutomationDisabledOnce(ns);
+=======
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
     }
   }
 }
 
+<<<<<<< HEAD
 function refreshFailureStateFromChildScripts(ns) {
   if (isCrimeAutomationDisabled()) {
     printCrimeAutomationDisabledOnce(ns);
@@ -255,15 +271,21 @@ function refreshFailureStateFromChildScripts(ns) {
   }
 }
 
+=======
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 function printStatus(ns) {
   const faction = getFactionToCreateGang(ns) || 'none';
   const karma = getKarma(ns);
   const canCreateNow = canUseGangApi(ns) && !inGang(ns) && !!faction;
+<<<<<<< HEAD
   const failureUntil = getCrimeFailureUntil();
   const coolingDown = Date.now() < failureUntil;
   const crimeFailures = getCrimeFailureCount();
   const crimeDisabled = isCrimeAutomationDisabled();
   ns.print(`[${localeHHMMSS()}] Progression status | inGang=${inGang(ns)} | gangFaction=${faction} | karma=${karma.toFixed(2)} | canCreate=${canCreateNow} | crimeCooldown=${coolingDown} | crimeFailures=${crimeFailures} | crimeDisabled=${crimeDisabled}`);
+=======
+  ns.print(`[${localeHHMMSS()}] Progression status | inGang=${inGang(ns)} | gangFaction=${faction} | karma=${karma.toFixed(2)} | canCreate=${canCreateNow}`);
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 }
 
 export async function main(ns) {
@@ -279,10 +301,14 @@ export async function main(ns) {
       tryCreateGang(ns);
     }
 
+<<<<<<< HEAD
     refreshFailureStateFromChildScripts(ns);
 
     if (canUseGangApi(ns) && inGang(ns)) {
       clearCrimeFailureState();
+=======
+    if (canUseGangApi(ns) && inGang(ns)) {
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
       ensureGangManager(ns);
     } else {
       ensureCrimeLoop(ns);

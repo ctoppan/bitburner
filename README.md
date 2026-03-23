@@ -111,8 +111,11 @@ These should generally not be started by hand during normal play:
 - `overlapBatchController.js`
 - `playerServers.js`
 - `progressionManager.js`
+<<<<<<< HEAD
 
 `playerServers.js` reserves money for the next manual home RAM/core purchase, but it no longer pops up repeated terminal warnings by default.
+=======
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 - `prepareGang.js`
 - `gangManager.js`
 - `prepTarget.js`
@@ -187,7 +190,10 @@ The crime scripts were updated to work more cleanly with modern Bitburner instal
 They now:
 - prefer the newer Singularity crime functions when available
 - use modern crime names
+<<<<<<< HEAD
 - avoid the deprecated `ns.isBusy()` path that can fail on newer installs
+=======
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 - handle crime timing more safely
 - stop automatically once gang-karma thresholds are met in the homicide loop
 

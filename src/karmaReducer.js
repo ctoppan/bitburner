@@ -20,6 +20,7 @@ function localeHHMMSS(ms = 0) {
   if (!ms) ms = Date.now();
   return new Date(ms).toLocaleTimeString();
 }
+<<<<<<< HEAD
 
 function getSingularity(ns) {
   try {
@@ -123,10 +124,41 @@ function startCrime(ns, crime) {
     if (tryCommitCrime(singularity, variant, settings.focus)) return true;
     if (tryCommitCrime(singularity, variant)) return true;
   }
+=======
+
+function getSingularity(ns) {
+  try {
+    return ns.singularity ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function canDoCrime(ns) {
+  const singularity = getSingularity(ns);
+  return !!(singularity && typeof singularity.commitCrime === 'function');
+}
+
+function playerHasOngoingWork(ns) {
+  const singularity = getSingularity(ns);
+
+  try {
+    if (singularity && typeof singularity.isBusy === 'function') {
+      return singularity.isBusy();
+    }
+  } catch {}
+
+  try {
+    if (singularity && typeof singularity.isWorking === 'function') {
+      return singularity.isWorking();
+    }
+  } catch {}
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 
   return false;
 }
 
+<<<<<<< HEAD
 function getCrimeTime(ns, crime) {
   const singularity = getSingularity(ns);
   const variants = [normalizeCrimeName(ns, crime), crime];
@@ -141,6 +173,39 @@ function getCrimeTime(ns, crime) {
       }
     } catch {}
   }
+=======
+function getKarma(ns) {
+  try {
+    return typeof ns.heart?.break === 'function' ? ns.heart.break() : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function startCrime(ns, crime) {
+  const singularity = getSingularity(ns);
+  if (!singularity || typeof singularity.commitCrime !== 'function') return false;
+
+  try {
+    const result = singularity.commitCrime(crime, settings.focus);
+    return result !== false;
+  } catch {
+    return false;
+  }
+}
+
+function getCrimeTime(ns, crime) {
+  const singularity = getSingularity(ns);
+
+  try {
+    if (singularity && typeof singularity.getCrimeStats === 'function') {
+      const stats = singularity.getCrimeStats(crime);
+      if (stats && typeof stats.time === 'number' && stats.time > 0) {
+        return stats.time;
+      }
+    }
+  } catch {}
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 
   return 3000;
 }
@@ -158,7 +223,12 @@ export async function main(ns) {
     return;
   }
 
+<<<<<<< HEAD
   const crimeCandidates = ['Homicide', 'Mug someone', 'Rob store', 'Shoplift'];
+=======
+  const crimeToCommit = 'Homicide';
+  const crimeTime = getCrimeTime(ns, crimeToCommit);
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 
   while (true) {
     const crimesStop = getItem(settings.keys.crimesStop);
@@ -172,6 +242,7 @@ export async function main(ns) {
       await ns.sleep(settings.pollMs);
     }
 
+<<<<<<< HEAD
     let started = false;
     let crimeToCommit = crimeCandidates[0];
     let crimeTime = 3000;
@@ -189,6 +260,13 @@ export async function main(ns) {
     if (!started) {
       ns.tprint(`[WARN ${localeHHMMSS()}] Failed to start any crime, stopping karmaReducer.js`);
       localStorage.setItem('BB_CRIME_FAILURE_UNTIL', JSON.stringify(Date.now() + 120000));
+=======
+    ns.tprint(`[${localeHHMMSS()}] Committing crime: ${crimeToCommit} (karma ${karma.toFixed(2)})`);
+    const started = startCrime(ns, crimeToCommit);
+
+    if (!started) {
+      ns.tprint(`[WARN ${localeHHMMSS()}] Failed to start ${crimeToCommit}, stopping karmaReducer.js`);
+>>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
       break;
     }
 
