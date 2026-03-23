@@ -5,8 +5,7 @@ const settings = {
   minUpgradeMultiplier: 2,
   loopSleepMs: 5123,
 
-  // Pre-Singularity fallback for home upgrades:
-  // Update these to the next visible costs from the Home screen after each purchase.
+  // Fallback only when Singularity home-upgrade cost APIs are unavailable.
   targetHomeRamCost: 316.788e9,
   targetHomeCoreCost: 421.875e9,
 
@@ -18,11 +17,12 @@ const settings = {
   // hover right below your goal.
   homeReserveBufferMultiplier: 1.1,
 
-  // Reminder behavior
+  // Manual home-upgrade reminders are disabled by default to avoid repeated popup spam.
   canAffordReminderMs: 60000,
+  enableHomeUpgradeReminder: false,
 
   keys: {
-    serverMap: "BB_SERVER_MAP",
+    serverMap: 'BB_SERVER_MAP',
   },
 };
 
@@ -42,22 +42,30 @@ function localeHHMMSS(ms = 0) {
 
 function createUUID() {
   let dt = Date.now();
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
     const r = (dt + Math.random() * 16) % 16 | 0;
     dt = Math.floor(dt / 16);
-    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
   });
+}
+
+function getSingularity(ns) {
+  try {
+    return ns.singularity ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function ensureServerMap() {
   let serverMap = getItem(settings.keys.serverMap);
-  if (!serverMap || typeof serverMap !== "object") {
+  if (!serverMap || typeof serverMap !== 'object') {
     serverMap = {
       lastUpdate: Date.now(),
       servers: {},
     };
   }
-  if (!serverMap.servers || typeof serverMap.servers !== "object") {
+  if (!serverMap.servers || typeof serverMap.servers !== 'object') {
     serverMap.servers = {};
   }
   return serverMap;
@@ -75,8 +83,8 @@ function updateServer(ns, serverMap, host) {
     minSecurityLevel: ns.getServerMinSecurityLevel(host),
     baseSecurityLevel: ns.getServerBaseSecurityLevel(host),
     ram: ns.getServerMaxRam(host),
-    connections: ["home"],
-    parent: "home",
+    connections: ['home'],
+    parent: 'home',
     children: [],
   };
 
@@ -112,43 +120,66 @@ function getPurchasedServers(ns) {
   return purchasedServers;
 }
 
-function getHomeUpgradePlan() {
-  const ramCost = settings.targetHomeRamCost;
-  const coreCost = settings.targetHomeCoreCost;
+function getDynamicHomeUpgradeCosts(ns) {
+  const singularity = getSingularity(ns);
+  let ramCost = settings.targetHomeRamCost;
+  let coreCost = settings.targetHomeCoreCost;
 
-  let target = "ram";
+  try {
+    if (singularity && typeof singularity.getUpgradeHomeRamCost === 'function') {
+      const value = singularity.getUpgradeHomeRamCost();
+      if (typeof value === 'number' && isFinite(value) && value > 0) {
+        ramCost = value;
+      }
+    }
+  } catch {}
+
+  try {
+    if (singularity && typeof singularity.getUpgradeHomeCoresCost === 'function') {
+      const value = singularity.getUpgradeHomeCoresCost();
+      if (typeof value === 'number' && isFinite(value) && value > 0) {
+        coreCost = value;
+      }
+    }
+  } catch {}
+
+  return { ramCost, coreCost };
+}
+
+function getHomeUpgradePlan(ns) {
+  const { ramCost, coreCost } = getDynamicHomeUpgradeCosts(ns);
+
+  let target = 'ram';
   let cost = ramCost;
 
   if (!settings.preferHomeRamOverCores) {
     if (coreCost < ramCost) {
-      target = "cores";
+      target = 'cores';
       cost = coreCost;
     }
     return { target, cost, ramCost, coreCost };
   }
 
   if (coreCost < ramCost * settings.coreCostVsRamCostThreshold) {
-    target = "cores";
+    target = 'cores';
     cost = coreCost;
   }
 
   return { target, cost, ramCost, coreCost };
 }
 
-function reserveForHome() {
-  const plan = getHomeUpgradePlan();
+function reserveForHome(ns) {
+  const plan = getHomeUpgradePlan(ns);
   return Math.ceil(plan.cost * settings.homeReserveBufferMultiplier);
 }
 
 function moneyBudget(ns) {
-  const money = ns.getServerMoneyAvailable("home");
-  const plan = getHomeUpgradePlan();
+  const money = ns.getServerMoneyAvailable('home');
+  const plan = getHomeUpgradePlan(ns);
 
-  // Hard lock once the target is reachable. This prevents the
-  // "HOME UPGRADE READY" -> immediate spend problem.
   if (money >= plan.cost) return 0;
 
-  const reserve = reserveForHome();
+  const reserve = reserveForHome(ns);
   const spendable = money - reserve;
 
   if (spendable <= 0) return 0;
@@ -193,14 +224,16 @@ function formatMoney(ns, amount) {
 let lastReminderAt = 0;
 
 function maybeRemindHomeUpgrade(ns) {
+  if (!settings.enableHomeUpgradeReminder) return false;
+
   const now = Date.now();
   if (now - lastReminderAt < settings.canAffordReminderMs) return false;
 
-  const money = ns.getServerMoneyAvailable("home");
-  const plan = getHomeUpgradePlan();
+  const money = ns.getServerMoneyAvailable('home');
+  const plan = getHomeUpgradePlan(ns);
 
   if (money >= plan.cost) {
-    ns.tprint(
+    ns.print(
       `[${localeHHMMSS()}] HOME UPGRADE READY: Buy home ${plan.target} manually ` +
       `(targetCost=${formatMoney(ns, plan.cost)}, cash=${formatMoney(ns, money)})`
     );
@@ -216,21 +249,21 @@ export async function main(ns) {
 
   settings.maxPlayerServers = ns.getPurchasedServerLimit();
 
-  if (ns.getHostname() !== "home") {
-    throw new Error("Run the script from home");
+  if (ns.getHostname() !== 'home') {
+    throw new Error('Run the script from home');
   }
 
   const maxGbRam = ns.getPurchasedServerMaxRam();
-  let lastPlanSummary = "";
+  let lastPlanSummary = '';
 
   while (true) {
     let didChange = false;
     let serverMap = ensureServerMap();
     removeMissingServers(ns, serverMap);
 
-    const money = ns.getServerMoneyAvailable("home");
-    const homePlan = getHomeUpgradePlan();
-    const reserve = reserveForHome();
+    const money = ns.getServerMoneyAvailable('home');
+    const homePlan = getHomeUpgradePlan(ns);
+    const reserve = reserveForHome(ns);
     const budget = moneyBudget(ns);
 
     maybeRemindHomeUpgrade(ns);

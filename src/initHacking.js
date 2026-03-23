@@ -2,6 +2,10 @@ const baseUrl = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src/
 
 // Toggle which hacking system to run
 const USE_OVERLAP_BATCH = true;
+const AUTO_START_PROGRESSION = true;
+
+const OVERLAP_BATCH_ARGS = ["", 0.01, 300, 128, 24];
+const CLASSIC_HACK_ARGS = [];
 
 // Home-upgrade coordination for non-Singularity play.
 // Update these after each manual home purchase.
@@ -38,6 +42,14 @@ function getFilesToDownload(ns) {
     "batchWeaken.js",
     "batchController.js",
     "overlapBatchController.js",
+    "commitCrime.js",
+    "getCrimesData.js",
+    "getCrimesData2.js",
+    "karmaReducer.js",
+    "prepareGang.js",
+    "gangManager.js",
+    "gangFastAscender.js",
+    "progressionManager.js",
   ];
 
   if (stockApiUnlocked(ns)) {
@@ -108,15 +120,21 @@ export async function main(ns) {
   }
 
   const nextScript = USE_OVERLAP_BATCH ? "overlapBatchController.js" : "runHacking.js";
+  const nextScriptArgs = USE_OVERLAP_BATCH ? OVERLAP_BATCH_ARGS : CLASSIC_HACK_ARGS;
 
-  ns.tprint(`[${localeHHMMSS()}] Starting killAll.js -> ${nextScript}`);
-  ns.run("killAll.js", 1, nextScript);
+  ns.tprint(`[${localeHHMMSS()}] Starting killAll.js -> ${nextScript} ${nextScriptArgs.join(" ")}`);
+  ns.run("killAll.js", 1, nextScript, ...nextScriptArgs);
 
   await ns.sleep(15000);
 
   if (!ns.isRunning("playerServers.js", "home")) {
     ns.tprint(`[${localeHHMMSS()}] Starting playerServers.js`);
     ns.run("playerServers.js", 1);
+  }
+
+  if (AUTO_START_PROGRESSION && !ns.isRunning("progressionManager.js", "home")) {
+    ns.tprint(`[${localeHHMMSS()}] Starting progressionManager.js`);
+    ns.run("progressionManager.js", 1);
   }
 
   if (stockEnabled) {

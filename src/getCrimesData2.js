@@ -3,63 +3,72 @@ const settings = {
     crimes: 'BB_CRIMES',
   },
   crimes: [
-    'shoplift',
-    'rob store',
-    'mug',
-    'larceny',
-    'deal drugs',
-    'bond forgery',
-    'traffick arms',
-    'homicide',
-    'grand theft auto',
-    'kidnap',
-    'assassinate',
-    'heist',
+    'Shoplift',
+    'Rob Store',
+    'Mug',
+    'Larceny',
+    'Deal Drugs',
+    'Bond Forgery',
+    'Traffick Illegal Arms',
+    'Homicide',
+    'Grand Theft Auto',
+    'Kidnap and Ransom',
+    'Assassination',
+    'Heist',
   ],
-}
+};
 
 function getItem(key) {
-  let item = localStorage.getItem(key)
-
-  return item ? JSON.parse(item) : undefined
+  const item = localStorage.getItem(key);
+  return item ? JSON.parse(item) : undefined;
 }
 
 function setItem(key, value) {
-  localStorage.setItem(key, JSON.stringify(value))
+  localStorage.setItem(key, JSON.stringify(value));
 }
 
 function localeHHMMSS(ms = 0) {
-  if (!ms) {
-    ms = new Date().getTime()
-  }
+  if (!ms) ms = Date.now();
+  return new Date(ms).toLocaleTimeString();
+}
 
-  return new Date(ms).toLocaleTimeString()
+function getCrimeStats(ns, crime) {
+  try {
+    if (ns.singularity && typeof ns.singularity.getCrimeStats === 'function') {
+      return ns.singularity.getCrimeStats(crime);
+    }
+  } catch {}
+
+  try {
+    if (typeof ns.getCrimeStats === 'function') {
+      return ns.getCrimeStats(crime);
+    }
+  } catch {}
+
+  return { money: 0, time: 1000, intelligence_exp: 0 };
 }
 
 export async function main(ns) {
-  ns.tprint(`[${localeHHMMSS()}] Starting getCrimesData2.js`)
+  ns.tprint(`[${localeHHMMSS()}] Starting getCrimesData2.js`);
 
-  const scriptToRunAfter = ns.args[0] || 'commitCrime.js'
+  const scriptToRunAfter = ns.args[0] || 'commitCrime.js';
 
-  let hostname = ns.getHostname()
-
-  if (hostname !== 'home') {
-    throw new Exception('Run the script from home')
+  if (ns.getHostname() !== 'home') {
+    throw new Error('Run the script from home');
   }
 
-  const crimesCache = getItem(settings.keys.crimes) || {}
-  const crimes = {}
+  const crimesCache = getItem(settings.keys.crimes) || {};
+  const crimes = {};
 
-  settings.crimes.map((crime) => {
-    const stats = ns.getCrimeStats(crime)
+  for (const crime of settings.crimes) {
+    const stats = getCrimeStats(ns, crime);
+    crimes[crime] = { ...crimesCache[crime], stats };
+  }
 
-    crimes[crime] = { ...crimesCache[crime], stats }
-  })
-
-  setItem(settings.keys.crimes, crimes)
+  setItem(settings.keys.crimes, crimes);
 
   if (scriptToRunAfter) {
-    ns.tprint(`[${localeHHMMSS()}] Spawning ${scriptToRunAfter}`)
-    ns.spawn(scriptToRunAfter, 1)
+    ns.tprint(`[${localeHHMMSS()}] Spawning ${scriptToRunAfter}`);
+    ns.spawn(scriptToRunAfter, 1);
   }
 }

@@ -1,12 +1,14 @@
 /** @param {NS} ns **/
 export async function main(ns) {
   const manualTarget = String(ns.args[0] ?? "");
-  const hackPct = clamp(Number(ns.args[1] ?? 0.02), 0.005, 0.08);
-  const spacer = Math.max(100, Number(ns.args[2] ?? 200));
-  const homeReserve = Math.max(16, Number(ns.args[3] ?? 64));
+  const hackPct = clamp(Number(ns.args[1] ?? 0.01), 0.005, 0.05);
+  const spacer = Math.max(200, Number(ns.args[2] ?? 300));
+  const homeReserve = Math.max(64, Number(ns.args[3] ?? 128));
 
-  // High default ceiling. Real limiting is done dynamically each cycle.
-  const maxBatches = Math.max(1, Number(ns.args[4] ?? 500));
+  // Keep this conservative. The old default of 500 could create thousands of queued jobs.
+  const maxBatches = Math.max(1, Number(ns.args[4] ?? 24));
+  const maxActiveJobs = Math.max(20, Number(ns.args[5] ?? 160));
+  const maxActiveBatches = Math.max(4, Number(ns.args[6] ?? 40));
 
   const scripts = ["batchHack.js", "batchGrow.js", "batchWeaken.js"];
   for (const script of scripts) {
@@ -18,7 +20,7 @@ export async function main(ns) {
 
   ns.disableLog("ALL");
   ns.ui.openTail();
-  ns.ui.resizeTail(420, 220);
+  ns.ui.resizeTail(420, 240);
   ns.ui.moveTail(1180, 60);
 
   let target = "";
@@ -100,15 +102,21 @@ export async function main(ns) {
       continue;
     }
 
+    const activeSummary = summarizeActiveBatches(ns, hosts, target);
+
     const availableBatches = countFittableBatches(ns, hosts, template, homeReserve);
     const fleetLaunchCap = estimateFleetLaunchCap(ns, hosts, template, homeReserve);
     const timingCap = estimateTimingCap(ns, target, spacer);
+    const jobCap = Math.max(0, Math.floor((maxActiveJobs - activeSummary.activeJobs) / 4));
+    const activeBatchCap = Math.max(0, maxActiveBatches - activeSummary.activeBatches);
 
     const batchesToLaunch = Math.min(
       maxBatches,
       availableBatches,
       fleetLaunchCap,
-      timingCap
+      timingCap,
+      jobCap,
+      activeBatchCap
     );
 
     if (batchesToLaunch < 1) {
@@ -119,7 +127,7 @@ export async function main(ns) {
         maxMoney,
         sec,
         minSec,
-        `WAIT_RAM avail:${availableBatches} fleet:${fleetLaunchCap} time:${timingCap}`,
+        `WAIT_RAM avail:${availableBatches} fleet:${fleetLaunchCap} time:${timingCap} jobs:${activeSummary.activeJobs}/${maxActiveJobs} batches:${activeSummary.activeBatches}/${maxActiveBatches}`,
         template
       );
       await ns.sleep(1000);
@@ -148,11 +156,11 @@ export async function main(ns) {
       maxMoney,
       sec,
       minSec,
-      `BATCH x${launched} avail:${availableBatches} fleet:${fleetLaunchCap} time:${timingCap}`,
+      `BATCH x${launched} avail:${availableBatches} fleet:${fleetLaunchCap} time:${timingCap} jobs:${activeSummary.activeJobs}/${maxActiveJobs} batches:${activeSummary.activeBatches}/${maxActiveBatches}`,
       template
     );
 
-    await ns.sleep(Math.max(200, spacer));
+    await ns.sleep(Math.max(250, spacer));
   }
 }
 
@@ -367,7 +375,7 @@ function estimateFleetLaunchCap(ns, hosts, template, homeReserve) {
   }
 
   const ramBased = Math.floor(totalFree / batchRam);
-  const hostBased = Math.max(1, largeHostCount * 8);
+  const hostBased = Math.max(1, largeHostCount * 4);
 
   return Math.max(1, Math.min(ramBased, hostBased));
 }
@@ -375,7 +383,40 @@ function estimateFleetLaunchCap(ns, hosts, template, homeReserve) {
 function estimateTimingCap(ns, target, spacer) {
   const weakenTime = ns.getWeakenTime(target);
   const spacingWindow = Math.max(1, spacer * 4);
-  return Math.max(20, Math.floor(weakenTime / spacingWindow));
+  return Math.max(8, Math.floor(weakenTime / spacingWindow));
+}
+
+function summarizeActiveBatches(ns, hosts, target) {
+  const tags = new Set();
+  let activeJobs = 0;
+
+  for (const host of hosts) {
+    for (const proc of ns.ps(host)) {
+      if (!isBatchScript(proc.filename)) continue;
+      if (proc.args?.[0] !== target) continue;
+
+      activeJobs++;
+
+      const tag = String(proc.args?.[2] ?? '');
+      if (!tag.startsWith('prep')) {
+        const parts = tag.split('-');
+        if (parts.length >= 2) {
+          tags.add(`${parts[0]}-${parts[1]}`);
+        } else if (tag) {
+          tags.add(tag);
+        }
+      }
+    }
+  }
+
+  return {
+    activeJobs,
+    activeBatches: tags.size,
+  };
+}
+
+function isBatchScript(filename) {
+  return filename === 'batchHack.js' || filename === 'batchGrow.js' || filename === 'batchWeaken.js';
 }
 
 function runPrepWeaken(ns, hosts, target, homeReserve) {
@@ -395,8 +436,8 @@ function runPrepGrow(ns, hosts, target, homeReserve) {
 
   for (const host of hosts) {
     const free = freeRam(ns, host, homeReserve);
-    const growThreads = Math.floor((free * 0.8) / growRam);
-    const weakenThreads = Math.floor((free * 0.2) / weakenRam);
+    const growThreads = Math.floor((free * 0.7) / growRam);
+    const weakenThreads = Math.floor((free * 0.3) / weakenRam);
 
     if (growThreads > 0) ns.exec("batchGrow.js", host, growThreads, target, 0, `${tag}-g`);
     if (weakenThreads > 0) ns.exec("batchWeaken.js", host, weakenThreads, target, 0, `${tag}-w`);
