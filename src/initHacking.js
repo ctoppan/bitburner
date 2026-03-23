@@ -3,6 +3,14 @@ const baseUrl = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src/
 // Toggle which hacking system to run
 const USE_OVERLAP_BATCH = true;
 
+// Home-upgrade coordination for non-Singularity play.
+// Update these after each manual home purchase.
+const HOME_RAM_TARGET = 316.788e9;
+const HOME_CORE_TARGET = 421.875e9;
+const PREFER_HOME_RAM = true;
+const CORE_COST_VS_RAM_COST_THRESHOLD = 0.6;
+const HOME_RESERVE_BUFFER = 1.1;
+
 function stockApiUnlocked(ns) {
   try {
     return !!(ns.stock && ns.stock.hasTIXAPIAccess && ns.stock.hasTIXAPIAccess());
@@ -13,24 +21,17 @@ function stockApiUnlocked(ns) {
 
 function getFilesToDownload(ns) {
   const files = [
-    // core
     "common.js",
     "spider.js",
     "find.js",
     "backdoorHelper.js",
-
-    // legacy system (kept for fallback)
     "mainHack.js",
     "grow.js",
     "hack.js",
     "weaken.js",
     "runHacking.js",
-
-    // management
     "killAll.js",
     "playerServers.js",
-
-    // batch system
     "prepTarget.js",
     "batchHack.js",
     "batchGrow.js",
@@ -44,6 +45,18 @@ function getFilesToDownload(ns) {
   }
 
   return files;
+}
+
+function getHomeUpgradeTarget() {
+  if (!PREFER_HOME_RAM) {
+    return Math.min(HOME_RAM_TARGET, HOME_CORE_TARGET);
+  }
+
+  if (HOME_CORE_TARGET < HOME_RAM_TARGET * CORE_COST_VS_RAM_COST_THRESHOLD) {
+    return HOME_CORE_TARGET;
+  }
+
+  return HOME_RAM_TARGET;
 }
 
 const valuesToRemove = ["BB_SERVER_MAP"];
@@ -99,7 +112,6 @@ export async function main(ns) {
   ns.tprint(`[${localeHHMMSS()}] Starting killAll.js -> ${nextScript}`);
   ns.run("killAll.js", 1, nextScript);
 
-  // Let the reset + spider chain finish.
   await ns.sleep(15000);
 
   if (!ns.isRunning("playerServers.js", "home")) {
@@ -108,7 +120,20 @@ export async function main(ns) {
   }
 
   if (stockEnabled && !ns.isRunning("stockTrader.js", "home")) {
-    ns.tprint(`[${localeHHMMSS()}] Starting stockTrader.js`);
-    ns.run("stockTrader.js", 1);
+    const homeTarget = getHomeUpgradeTarget();
+    ns.tprint(
+      `[${localeHHMMSS()}] Starting stockTrader.js with home target ${ns.formatNumber(homeTarget, 3)}`
+    );
+    ns.run(
+      "stockTrader.js",
+      1,
+      0.20,   // reservePct
+      5e9,    // minCashReserve
+      0.25,   // tradeBudgetPct
+      0.05,   // minForecastEdge
+      6000,   // pollMs
+      homeTarget,
+      HOME_RESERVE_BUFFER
+    );
   }
 }

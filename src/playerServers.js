@@ -6,7 +6,7 @@ const settings = {
   loopSleepMs: 5123,
 
   // Pre-Singularity fallback for home upgrades:
-  // Set these to the next visible costs from the Home screen.
+  // Update these to the next visible costs from the Home screen after each purchase.
   targetHomeRamCost: 316.788e9,
   targetHomeCoreCost: 421.875e9,
 
@@ -14,8 +14,8 @@ const settings = {
   preferHomeRamOverCores: true,
   coreCostVsRamCostThreshold: 0.6,
 
-  // Keep a little extra above the chosen target so pserv spending
-  // does not stall just under the amount you want to save.
+  // Keep a little extra above the chosen target so spenders do not
+  // hover right below your goal.
   homeReserveBufferMultiplier: 1.1,
 
   // Reminder behavior
@@ -142,6 +142,12 @@ function reserveForHome() {
 
 function moneyBudget(ns) {
   const money = ns.getServerMoneyAvailable("home");
+  const plan = getHomeUpgradePlan();
+
+  // Hard lock once the target is reachable. This prevents the
+  // "HOME UPGRADE READY" -> immediate spend problem.
+  if (money >= plan.cost) return 0;
+
   const reserve = reserveForHome();
   const spendable = money - reserve;
 

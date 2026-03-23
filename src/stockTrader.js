@@ -5,8 +5,12 @@ export async function main(ns) {
   const reservePct = clamp(Number(ns.args[0] ?? 0.20), 0, 0.90);
   const minCashReserve = Math.max(0, Number(ns.args[1] ?? 5e9));
   const tradeBudgetPct = clamp(Number(ns.args[2] ?? 0.25), 0.01, 1.0);
-  const minForecastEdge = Number(ns.args[3] ?? 0.05); // 4S only
+  const minForecastEdge = Number(ns.args[3] ?? 0.05);
   const pollMs = Math.max(1000, Number(ns.args[4] ?? 6000));
+
+  // New args for coordinating with home-upgrade saving
+  const homeUpgradeTarget = Math.max(0, Number(ns.args[5] ?? 0));
+  const homeReserveBuffer = Math.max(1, Number(ns.args[6] ?? 1.1));
 
   if (!hasTixApi(ns)) {
     ns.tprint("ERROR stockTrader.js requires WSE + TIX API access.");
@@ -36,17 +40,24 @@ export async function main(ns) {
     const snapshots = symbols.map((sym) => snapshot(ns, sym, has4S, lastPrice[sym], canShort));
     for (const s of snapshots) lastPrice[s.sym] = s.price;
 
-    // Sell first
+    // Always allow sells first
     for (const s of snapshots) {
       maybeSell(ns, s, has4S, commission);
     }
 
-    // Recompute after sells
     const cash = ns.getServerMoneyAvailable("home");
-    const reserve = Math.max(minCashReserve, cash * reservePct);
-    let spendable = Math.max(0, cash - reserve);
 
-    // Best candidates first
+    const baseReserve = Math.max(minCashReserve, cash * reservePct);
+    const protectedHomeReserve =
+      homeUpgradeTarget > 0 ? Math.ceil(homeUpgradeTarget * homeReserveBuffer) : 0;
+    const reserve = Math.max(baseReserve, protectedHomeReserve);
+
+    // Once the home target itself is reachable, stop opening new stock positions.
+    // This protects the manual click window.
+    const hardLockForHome = homeUpgradeTarget > 0 && cash >= homeUpgradeTarget;
+
+    let spendable = hardLockForHome ? 0 : Math.max(0, cash - reserve);
+
     const ranked = snapshots
       .filter((s) => s.signal !== 0)
       .sort((a, b) => Math.abs(b.score) - Math.abs(a.score));
@@ -59,7 +70,17 @@ export async function main(ns) {
       spendable -= used;
     }
 
-    render(ns, symbols, has4S, canShort);
+    render(ns, symbols, has4S, canShort, {
+      reservePct,
+      minCashReserve,
+      tradeBudgetPct,
+      homeUpgradeTarget,
+      homeReserveBuffer,
+      hardLockForHome,
+      reserve,
+      spendable,
+    });
+
     await ns.sleep(pollMs);
   }
 }
@@ -75,9 +96,6 @@ function snapshot(ns, sym, has4S, prevPrice, canShort) {
     forecast = safeCall(() => ns.stock.getForecast(sym), 0.5) || 0.5;
   }
 
-  // Signal:
-  // 4S mode: forecast-centered signal
-  // non-4S mode: simple momentum from price delta
   let signal = 0;
   let score = 0;
 
@@ -143,7 +161,6 @@ function maybeBuy(ns, s, has4S, canShort, budget, commission, minForecastEdge) {
   const remainingLong = Math.max(0, maxShares - longShares);
   const remainingShort = Math.max(0, maxShares - shortShares);
 
-  // Require stronger confidence in 4S mode
   if (has4S && Math.abs(s.forecast - 0.5) < minForecastEdge) return 0;
 
   const affordableShares = Math.floor((budget - commission) / Math.max(1, price));
@@ -168,12 +185,21 @@ function maybeBuy(ns, s, has4S, canShort, budget, commission, minForecastEdge) {
   return 0;
 }
 
-function render(ns, symbols, has4S, canShort) {
+function render(ns, symbols, has4S, canShort, cfg) {
   ns.clearLog();
 
   const cash = ns.getServerMoneyAvailable("home");
   ns.print(`Mode: ${has4S ? "4S" : "Momentum"}${canShort ? " + Shorts" : ""}`);
   ns.print(`Cash: ${formatMoney(cash)}`);
+  ns.print(`Reserve: ${formatMoney(cfg.reserve)}`);
+  if (cfg.homeUpgradeTarget > 0) {
+    ns.print(
+      `Home target: ${formatMoney(cfg.homeUpgradeTarget)} x ${cfg.homeReserveBuffer.toFixed(2)} ` +
+      `= ${formatMoney(Math.ceil(cfg.homeUpgradeTarget * cfg.homeReserveBuffer))}`
+    );
+    ns.print(`Home lock: ${cfg.hardLockForHome ? "ON" : "off"}`);
+  }
+  ns.print(`Spendable: ${formatMoney(cfg.spendable)}`);
   ns.print("");
 
   const rows = [];
