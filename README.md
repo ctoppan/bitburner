@@ -1,11 +1,11 @@
 # Bitburner Automation Starter
 
-This repo is set up as an opinionated Bitburner automation stack with a small bootstrap, a safer hacking controller, and optional crime and gang progression.
+This repo is set up as an opinionated Bitburner automation stack with a small bootstrap, a safer hacking controller, and gang automation without auto-starting crime scripts.
 
 The goals of this version are:
 - keep startup simple
 - avoid runaway batch spam that can freeze the game
-- automate the common hacking -> crime -> gang progression path
+- automate the common hacking -> gang progression path
 - leave browser-only helpers manual
 
 ## Quick Start
@@ -147,7 +147,7 @@ This is best treated as a manual gang utility rather than part of the default al
 
 ### Optional manual control scripts
 
-These are runnable Netscript scripts, but you usually let `progressionManager.js` decide when to use them:
+These are runnable Netscript scripts, but they are manual-only by default:
 
 - `commitCrime.js`
 - `karmaReducer.js`
@@ -225,3 +225,8 @@ This repo pulls files from:
 - `ctoppan/bitburner`
 
 Running `start.js` refreshes the local copies from the repo, so local manual edits will be overwritten unless they are committed upstream.
+
+
+## Crime automation
+
+Crime scripts are no longer auto-started. If you want to use them, run `commitCrime.js` or `karmaReducer.js` manually.
