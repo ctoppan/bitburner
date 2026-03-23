@@ -5,11 +5,21 @@ const settings = {
   minUpgradeMultiplier: 2,
   loopSleepMs: 5123,
 
-  // Home upgrade behavior
-  autoBuyHomeUpgrades: true,
-  homeReserveBufferMultiplier: 1.1,
+  // Pre-Singularity fallback for home upgrades:
+  // Set these to the next visible costs from the Home screen.
+  targetHomeRamCost: 316.788e9,
+  targetHomeCoreCost: 421.875e9,
+
+  // Prefer RAM unless cores are much cheaper
   preferHomeRamOverCores: true,
-  coreCostVsRamCostThreshold: 0.6, // buy cores if core cost is less than 60% of RAM cost
+  coreCostVsRamCostThreshold: 0.6,
+
+  // Keep a little extra above the chosen target so pserv spending
+  // does not stall just under the amount you want to save.
+  homeReserveBufferMultiplier: 1.1,
+
+  // Reminder behavior
+  canAffordReminderMs: 60000,
 
   keys: {
     serverMap: "BB_SERVER_MAP",
@@ -102,9 +112,9 @@ function getPurchasedServers(ns) {
   return purchasedServers;
 }
 
-function getHomeUpgradePlan(ns) {
-  const ramCost = ns.singularity.getUpgradeHomeRamCost();
-  const coreCost = ns.singularity.getUpgradeHomeCoresCost();
+function getHomeUpgradePlan() {
+  const ramCost = settings.targetHomeRamCost;
+  const coreCost = settings.targetHomeCoreCost;
 
   let target = "ram";
   let cost = ramCost;
@@ -125,19 +135,14 @@ function getHomeUpgradePlan(ns) {
   return { target, cost, ramCost, coreCost };
 }
 
-function reserveForHome(ns) {
-  const plan = getHomeUpgradePlan(ns);
+function reserveForHome() {
+  const plan = getHomeUpgradePlan();
   return Math.ceil(plan.cost * settings.homeReserveBufferMultiplier);
 }
 
 function moneyBudget(ns) {
   const money = ns.getServerMoneyAvailable("home");
-
-  if (!settings.autoBuyHomeUpgrades) {
-    return money * settings.totalMoneyAllocation;
-  }
-
-  const reserve = reserveForHome(ns);
+  const reserve = reserveForHome();
   const spendable = money - reserve;
 
   if (spendable <= 0) return 0;
@@ -179,29 +184,21 @@ function formatMoney(ns, amount) {
   return ns.formatNumber(amount, 3);
 }
 
-function tryBuyHomeUpgrade(ns) {
-  if (!settings.autoBuyHomeUpgrades) return false;
+let lastReminderAt = 0;
 
-  const plan = getHomeUpgradePlan(ns);
+function maybeRemindHomeUpgrade(ns) {
+  const now = Date.now();
+  if (now - lastReminderAt < settings.canAffordReminderMs) return false;
+
   const money = ns.getServerMoneyAvailable("home");
+  const plan = getHomeUpgradePlan();
 
-  if (money < plan.cost) return false;
-
-  let ok = false;
-
-  if (plan.target === "ram") {
-    ok = ns.singularity.upgradeHomeRam();
-  } else {
-    ok = ns.singularity.upgradeHomeCores();
-  }
-
-  if (ok) {
+  if (money >= plan.cost) {
     ns.tprint(
-      `[${localeHHMMSS()}] Bought home ${plan.target} upgrade ` +
-      `(cost=${formatMoney(ns, plan.cost)}, ` +
-      `nextRamCost=${formatMoney(ns, ns.singularity.getUpgradeHomeRamCost())}, ` +
-      `nextCoreCost=${formatMoney(ns, ns.singularity.getUpgradeHomeCoresCost())})`
+      `[${localeHHMMSS()}] HOME UPGRADE READY: Buy home ${plan.target} manually ` +
+      `(targetCost=${formatMoney(ns, plan.cost)}, cash=${formatMoney(ns, money)})`
     );
+    lastReminderAt = now;
     return true;
   }
 
@@ -225,18 +222,12 @@ export async function main(ns) {
     let serverMap = ensureServerMap();
     removeMissingServers(ns, serverMap);
 
-    // First priority: auto-buy home upgrades
-    const boughtHomeUpgrade = tryBuyHomeUpgrade(ns);
-    if (boughtHomeUpgrade) {
-      didChange = true;
-      await ns.sleep(250);
-      continue;
-    }
-
     const money = ns.getServerMoneyAvailable("home");
-    const homePlan = getHomeUpgradePlan(ns);
-    const reserve = reserveForHome(ns);
+    const homePlan = getHomeUpgradePlan();
+    const reserve = reserveForHome();
     const budget = moneyBudget(ns);
+
+    maybeRemindHomeUpgrade(ns);
 
     const planSummary =
       `home target=${homePlan.target}, ` +
