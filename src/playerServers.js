@@ -4,9 +4,13 @@ const settings = {
   totalMoneyAllocation: 0.9,
   minUpgradeMultiplier: 2,
   loopSleepMs: 5123,
-  homeReserveBufferMultiplier: 1.1, // keep a little extra above the chosen home upgrade cost
+
+  // Home upgrade behavior
+  autoBuyHomeUpgrades: true,
+  homeReserveBufferMultiplier: 1.1,
   preferHomeRamOverCores: true,
   coreCostVsRamCostThreshold: 0.6, // buy cores if core cost is less than 60% of RAM cost
+
   keys: {
     serverMap: "BB_SERVER_MAP",
   },
@@ -128,6 +132,11 @@ function reserveForHome(ns) {
 
 function moneyBudget(ns) {
   const money = ns.getServerMoneyAvailable("home");
+
+  if (!settings.autoBuyHomeUpgrades) {
+    return money * settings.totalMoneyAllocation;
+  }
+
   const reserve = reserveForHome(ns);
   const spendable = money - reserve;
 
@@ -170,6 +179,35 @@ function formatMoney(ns, amount) {
   return ns.formatNumber(amount, 3);
 }
 
+function tryBuyHomeUpgrade(ns) {
+  if (!settings.autoBuyHomeUpgrades) return false;
+
+  const plan = getHomeUpgradePlan(ns);
+  const money = ns.getServerMoneyAvailable("home");
+
+  if (money < plan.cost) return false;
+
+  let ok = false;
+
+  if (plan.target === "ram") {
+    ok = ns.singularity.upgradeHomeRam();
+  } else {
+    ok = ns.singularity.upgradeHomeCores();
+  }
+
+  if (ok) {
+    ns.tprint(
+      `[${localeHHMMSS()}] Bought home ${plan.target} upgrade ` +
+      `(cost=${formatMoney(ns, plan.cost)}, ` +
+      `nextRamCost=${formatMoney(ns, ns.singularity.getUpgradeHomeRamCost())}, ` +
+      `nextCoreCost=${formatMoney(ns, ns.singularity.getUpgradeHomeCoresCost())})`
+    );
+    return true;
+  }
+
+  return false;
+}
+
 export async function main(ns) {
   ns.tprint(`[${localeHHMMSS()}] Starting playerServers.js`);
 
@@ -186,6 +224,14 @@ export async function main(ns) {
     let didChange = false;
     let serverMap = ensureServerMap();
     removeMissingServers(ns, serverMap);
+
+    // First priority: auto-buy home upgrades
+    const boughtHomeUpgrade = tryBuyHomeUpgrade(ns);
+    if (boughtHomeUpgrade) {
+      didChange = true;
+      await ns.sleep(250);
+      continue;
+    }
 
     const money = ns.getServerMoneyAvailable("home");
     const homePlan = getHomeUpgradePlan(ns);
