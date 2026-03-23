@@ -34,7 +34,6 @@ function canDoCrime(ns) {
   return !!(singularity && typeof singularity.commitCrime === 'function');
 }
 
-<<<<<<< HEAD
 function getCurrentWork(singularity) {
   try {
     if (singularity && typeof singularity.getCurrentWork === 'function') {
@@ -48,10 +47,6 @@ function playerHasOngoingWork(ns) {
   const singularity = getSingularity(ns);
   const currentWork = getCurrentWork(singularity);
   if (currentWork) return true;
-=======
-function playerHasOngoingWork(ns) {
-  const singularity = getSingularity(ns);
->>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 
   try {
     if (singularity && typeof singularity.isBusy === 'function') {
@@ -116,7 +111,6 @@ function selectCrime(crimes) {
   return bestCrime;
 }
 
-<<<<<<< HEAD
 function normalizeCrimeName(ns, crime) {
   try {
     const crimeType = ns.enums?.CrimeType;
@@ -148,13 +142,10 @@ function stopActionIfPossible(singularity) {
   return false;
 }
 
-=======
->>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 function startCrime(ns, crime) {
   const singularity = getSingularity(ns);
   if (!singularity || typeof singularity.commitCrime !== 'function') return false;
 
-<<<<<<< HEAD
   const variants = [
     normalizeCrimeName(ns, crime),
     crime,
@@ -174,14 +165,6 @@ function startCrime(ns, crime) {
   }
 
   return false;
-=======
-  try {
-    const result = singularity.commitCrime(crime, settings.focus);
-    return result !== false;
-  } catch {
-    return false;
-  }
->>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
 }
 
 export async function main(ns) {
@@ -220,12 +203,8 @@ export async function main(ns) {
     const started = startCrime(ns, crimeToCommit);
 
     if (!started) {
-<<<<<<< HEAD
       ns.tprint(`[WARN ${localeHHMMSS()}] Failed to start crime ${crimeToCommit}, backing off`);
       localStorage.setItem('BB_CRIME_FAILURE_UNTIL', JSON.stringify(Date.now() + 120000));
-=======
-      ns.tprint(`[WARN ${localeHHMMSS()}] Failed to start crime ${crimeToCommit}, refreshing crime data`);
->>>>>>> bf1671abcf49c15a03be46d532777b0bf4081580
       break;
     }
 
