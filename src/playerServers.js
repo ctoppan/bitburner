@@ -4,6 +4,9 @@ const settings = {
   totalMoneyAllocation: 0.9,
   minUpgradeMultiplier: 2,
   loopSleepMs: 5123,
+  homeReserveBufferMultiplier: 1.1, // keep a little extra above the chosen home upgrade cost
+  preferHomeRamOverCores: true,
+  coreCostVsRamCostThreshold: 0.6, // buy cores if core cost is less than 60% of RAM cost
   keys: {
     serverMap: "BB_SERVER_MAP",
   },
@@ -95,8 +98,41 @@ function getPurchasedServers(ns) {
   return purchasedServers;
 }
 
+function getHomeUpgradePlan(ns) {
+  const ramCost = ns.singularity.getUpgradeHomeRamCost();
+  const coreCost = ns.singularity.getUpgradeHomeCoresCost();
+
+  let target = "ram";
+  let cost = ramCost;
+
+  if (!settings.preferHomeRamOverCores) {
+    if (coreCost < ramCost) {
+      target = "cores";
+      cost = coreCost;
+    }
+    return { target, cost, ramCost, coreCost };
+  }
+
+  if (coreCost < ramCost * settings.coreCostVsRamCostThreshold) {
+    target = "cores";
+    cost = coreCost;
+  }
+
+  return { target, cost, ramCost, coreCost };
+}
+
+function reserveForHome(ns) {
+  const plan = getHomeUpgradePlan(ns);
+  return Math.ceil(plan.cost * settings.homeReserveBufferMultiplier);
+}
+
 function moneyBudget(ns) {
-  return ns.getServerMoneyAvailable("home") * settings.totalMoneyAllocation;
+  const money = ns.getServerMoneyAvailable("home");
+  const reserve = reserveForHome(ns);
+  const spendable = money - reserve;
+
+  if (spendable <= 0) return 0;
+  return spendable * settings.totalMoneyAllocation;
 }
 
 function highestAffordablePurchaseRam(ns, minRam, maxRam) {
@@ -130,6 +166,10 @@ function highestAffordableUpgradeRam(ns, host, currentRam, maxRam) {
   return best;
 }
 
+function formatMoney(ns, amount) {
+  return ns.formatNumber(amount, 3);
+}
+
 export async function main(ns) {
   ns.tprint(`[${localeHHMMSS()}] Starting playerServers.js`);
 
@@ -140,13 +180,37 @@ export async function main(ns) {
   }
 
   const maxGbRam = ns.getPurchasedServerMaxRam();
+  let lastPlanSummary = "";
 
   while (true) {
     let didChange = false;
     let serverMap = ensureServerMap();
     removeMissingServers(ns, serverMap);
 
+    const money = ns.getServerMoneyAvailable("home");
+    const homePlan = getHomeUpgradePlan(ns);
+    const reserve = reserveForHome(ns);
+    const budget = moneyBudget(ns);
+
+    const planSummary =
+      `home target=${homePlan.target}, ` +
+      `ramCost=${formatMoney(ns, homePlan.ramCost)}, ` +
+      `coreCost=${formatMoney(ns, homePlan.coreCost)}, ` +
+      `reserve=${formatMoney(ns, reserve)}, ` +
+      `budget=${formatMoney(ns, budget)}, ` +
+      `money=${formatMoney(ns, money)}`;
+
+    if (planSummary !== lastPlanSummary) {
+      ns.tprint(`[${localeHHMMSS()}] ${planSummary}`);
+      lastPlanSummary = planSummary;
+    }
+
     let purchasedServers = getPurchasedServers(ns);
+
+    if (budget <= 0) {
+      await ns.sleep(settings.loopSleepMs);
+      continue;
+    }
 
     if (purchasedServers.length < settings.maxPlayerServers) {
       const smallestCurrentServer = purchasedServers.length
@@ -159,7 +223,7 @@ export async function main(ns) {
         maxGbRam
       );
 
-      if (targetRam > 0 && moneyBudget(ns) >= ns.getPurchasedServerCost(targetRam)) {
+      if (targetRam > 0 && budget >= ns.getPurchasedServerCost(targetRam)) {
         let hostname = `pserv-${targetRam}-${createUUID()}`;
         hostname = ns.purchaseServer(hostname, targetRam);
 
