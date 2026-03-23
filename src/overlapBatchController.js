@@ -1,14 +1,16 @@
 /** @param {NS} ns **/
 export async function main(ns) {
   const manualTarget = String(ns.args[0] ?? "");
-  const hackPct = clamp(Number(ns.args[1] ?? 0.01), 0.005, 0.05);
-  const spacer = Math.max(200, Number(ns.args[2] ?? 300));
+  const baseHackPct = clamp(Number(ns.args[1] ?? 0.01), 0.005, 0.08);
+  const baseSpacer = clamp(Number(ns.args[2] ?? 300), 80, 500);
   const homeReserve = Math.max(64, Number(ns.args[3] ?? 128));
 
   // Keep this conservative. The old default of 500 could create thousands of queued jobs.
-  const maxBatches = Math.max(1, Number(ns.args[4] ?? 24));
+  const baseMaxBatches = Math.max(1, Number(ns.args[4] ?? 24));
   const maxActiveJobs = Math.max(20, Number(ns.args[5] ?? 160));
   const maxActiveBatches = Math.max(4, Number(ns.args[6] ?? 40));
+
+  const tuner = createTuner(baseHackPct, baseSpacer, baseMaxBatches, maxActiveJobs, maxActiveBatches);
 
   const scripts = ["batchHack.js", "batchGrow.js", "batchWeaken.js"];
   for (const script of scripts) {
@@ -20,8 +22,8 @@ export async function main(ns) {
 
   ns.disableLog("ALL");
   ns.ui.openTail();
-  ns.ui.resizeTail(420, 240);
-  ns.ui.moveTail(1180, 60);
+  ns.ui.resizeTail(460, 300);
+  ns.ui.moveTail(1140, 40);
 
   let target = "";
   let nextLanding = 0;
@@ -46,6 +48,7 @@ export async function main(ns) {
       target = picked;
       nextLanding = Date.now() + ns.getWeakenTime(target) + 2000;
       prepStart = 0;
+      tuner.noteTargetChange(target);
       ns.tprint(`[overlapBatchController.js] Target selected: ${target}`);
     }
 
@@ -61,6 +64,7 @@ export async function main(ns) {
 
     if (inPrep) {
       if (prepStart === 0) prepStart = Date.now();
+      tuner.notePrep();
 
       if (!manualTarget && Date.now() - prepStart > Math.max(180000, weakenTime * 2)) {
         ns.tprint(`[overlapBatchController.js] Prep timeout on ${target}, re-evaluating target`);
@@ -73,9 +77,9 @@ export async function main(ns) {
       if (needsWeaken) {
         if (!hasPrepWeakenRunning(ns, hosts, target)) {
           runPrepWeaken(ns, hosts, target, homeReserve);
-          showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_WEAKEN");
+          showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_WEAKEN", null, tuner, hosts, homeReserve);
         } else {
-          showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_WEAKEN_WAIT");
+          showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_WEAKEN_WAIT", null, tuner, hosts, homeReserve);
         }
         await ns.sleep(1000);
         continue;
@@ -84,9 +88,9 @@ export async function main(ns) {
       if (needsGrow) {
         if (!hasPrepGrowRunning(ns, hosts, target)) {
           runPrepGrow(ns, hosts, target, homeReserve);
-          showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_GROW");
+          showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_GROW", null, tuner, hosts, homeReserve);
         } else {
-          showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_GROW_WAIT");
+          showStatus(ns, target, money, maxMoney, sec, minSec, "PREP_GROW_WAIT", null, tuner, hosts, homeReserve);
         }
         await ns.sleep(1000);
         continue;
@@ -95,7 +99,7 @@ export async function main(ns) {
       prepStart = 0;
     }
 
-    const template = buildBatchTemplate(ns, target, hackPct);
+    const template = buildBatchTemplate(ns, target, tuner.hackPct);
     if (!template) {
       ns.print("Could not build batch template.");
       await ns.sleep(3000);
@@ -103,15 +107,16 @@ export async function main(ns) {
     }
 
     const activeSummary = summarizeActiveBatches(ns, hosts, target);
+    const ramStats = getFleetRamStats(ns, hosts, homeReserve);
 
     const availableBatches = countFittableBatches(ns, hosts, template, homeReserve);
     const fleetLaunchCap = estimateFleetLaunchCap(ns, hosts, template, homeReserve);
-    const timingCap = estimateTimingCap(ns, target, spacer);
+    const timingCap = estimateTimingCap(ns, target, tuner.spacer);
     const jobCap = Math.max(0, Math.floor((maxActiveJobs - activeSummary.activeJobs) / 4));
     const activeBatchCap = Math.max(0, maxActiveBatches - activeSummary.activeBatches);
 
     const batchesToLaunch = Math.min(
-      maxBatches,
+      tuner.maxBatches,
       availableBatches,
       fleetLaunchCap,
       timingCap,
@@ -120,6 +125,23 @@ export async function main(ns) {
     );
 
     if (batchesToLaunch < 1) {
+      const stallReason = determineStallReason(
+        availableBatches,
+        fleetLaunchCap,
+        timingCap,
+        jobCap,
+        activeBatchCap,
+        activeSummary,
+        maxActiveJobs,
+        maxActiveBatches
+      );
+      tuner.observe({
+        launched: 0,
+        activeSummary: { ...activeSummary, maxJobs: maxActiveJobs, maxBatches: maxActiveBatches },
+        ramStats,
+        stallReason,
+        inPrep: false,
+      });
       showStatus(
         ns,
         target,
@@ -127,8 +149,11 @@ export async function main(ns) {
         maxMoney,
         sec,
         minSec,
-        `WAIT_RAM avail:${availableBatches} fleet:${fleetLaunchCap} time:${timingCap} jobs:${activeSummary.activeJobs}/${maxActiveJobs} batches:${activeSummary.activeBatches}/${maxActiveBatches}`,
-        template
+        `WAIT_${stallReason} avail:${availableBatches} fleet:${fleetLaunchCap} time:${timingCap} jobs:${activeSummary.activeJobs}/${maxActiveJobs} batches:${activeSummary.activeBatches}/${maxActiveBatches}`,
+        template,
+        tuner,
+        hosts,
+        homeReserve
       );
       await ns.sleep(1000);
       continue;
@@ -136,18 +161,28 @@ export async function main(ns) {
 
     let launched = 0;
     for (let i = 0; i < batchesToLaunch; i++) {
-      const landing = nextLanding + i * spacer * 4;
-      const jobs = materializeBatch(ns, target, template, landing, spacer, i);
+      const landing = nextLanding + i * tuner.spacer * 4;
+      const jobs = materializeBatch(ns, target, template, landing, tuner.spacer, i);
       const ok = deployBatch(ns, hosts, jobs, homeReserve);
       if (!ok) break;
       launched++;
     }
 
     if (launched > 0) {
-      nextLanding += launched * spacer * 4;
+      nextLanding += launched * tuner.spacer * 4;
     } else {
-      nextLanding = Math.max(nextLanding, Date.now() + weakenTime + spacer * 4);
+      nextLanding = Math.max(nextLanding, Date.now() + weakenTime + tuner.spacer * 4);
     }
+
+    const stallReason = launched < batchesToLaunch ? "PARTIAL_RAM" : "NONE";
+    tuner.observe({
+      launched,
+      requested: batchesToLaunch,
+      activeSummary: { ...activeSummary, maxJobs: maxActiveJobs, maxBatches: maxActiveBatches },
+      ramStats,
+      stallReason,
+      inPrep: false,
+    });
 
     showStatus(
       ns,
@@ -157,11 +192,142 @@ export async function main(ns) {
       sec,
       minSec,
       `BATCH x${launched} avail:${availableBatches} fleet:${fleetLaunchCap} time:${timingCap} jobs:${activeSummary.activeJobs}/${maxActiveJobs} batches:${activeSummary.activeBatches}/${maxActiveBatches}`,
-      template
+      template,
+      tuner,
+      hosts,
+      homeReserve
     );
 
-    await ns.sleep(Math.max(250, spacer));
+    await ns.sleep(Math.max(250, tuner.spacer));
   }
+}
+
+function createTuner(baseHackPct, baseSpacer, baseMaxBatches, maxActiveJobs, maxActiveBatches) {
+  return {
+    enabled: true,
+    target: "",
+    hackPct: baseHackPct,
+    spacer: baseSpacer,
+    maxBatches: baseMaxBatches,
+    minHackPct: Math.max(0.005, Math.min(baseHackPct, 0.01)),
+    maxHackPct: Math.max(0.04, Math.min(0.1, baseHackPct * 4)),
+    minSpacer: 80,
+    maxSpacer: Math.max(300, baseSpacer + 150),
+    minMaxBatches: Math.max(8, Math.min(baseMaxBatches, 16)),
+    maxMaxBatches: Math.max(48, Math.min(160, baseMaxBatches * 4)),
+    maxActiveJobs,
+    maxActiveBatches,
+    lastTuneAt: 0,
+    lastChange: "init",
+    recent: [],
+    lastReason: "starting",
+    noteTargetChange(target) {
+      this.target = target;
+      this.recent = [];
+      this.lastReason = `target ${target}`;
+    },
+    notePrep() {
+      this.lastReason = "prep";
+    },
+    observe(sample) {
+      this.recent.push({ ...sample, ts: Date.now() });
+      while (this.recent.length > 24) this.recent.shift();
+      this.maybeTune();
+    },
+    maybeTune() {
+      if (!this.enabled) return;
+      if (Date.now() - this.lastTuneAt < 30000) return;
+      if (this.recent.length < 6) return;
+
+      const usable = this.recent.filter((x) => !x.inPrep);
+      if (usable.length < 4) return;
+
+      const avg = averageSamples(usable);
+      let changed = false;
+
+      const jobPressure = avg.jobRatio > 0.92;
+      const batchPressure = avg.batchRatio > 0.92;
+      const ramPressure = avg.freeRamRatio < 0.08;
+      const lotsOfHeadroom = avg.freeRamRatio > 0.35 && avg.jobRatio < 0.75 && avg.batchRatio < 0.75;
+      const ramWait = avg.stallReasons.RAM > 0.4;
+      const concurrencyWait = avg.stallReasons.CONCURRENCY > 0.35;
+      const partialRam = avg.stallReasons.PARTIAL_RAM > 0.25;
+
+      if (jobPressure || batchPressure || concurrencyWait) {
+        this.hackPct = clamp(this.hackPct - 0.0025, this.minHackPct, this.maxHackPct);
+        this.spacer = clamp(this.spacer + 20, this.minSpacer, this.maxSpacer);
+        this.maxBatches = Math.max(this.minMaxBatches, this.maxBatches - 2);
+        this.lastChange = `backoff concurrency jobs:${pct(avg.jobRatio)} batches:${pct(avg.batchRatio)}`;
+        changed = true;
+      } else if (ramPressure || ramWait || partialRam) {
+        this.hackPct = clamp(this.hackPct - 0.002, this.minHackPct, this.maxHackPct);
+        this.spacer = clamp(this.spacer + 10, this.minSpacer, this.maxSpacer);
+        this.maxBatches = Math.max(this.minMaxBatches, this.maxBatches - 1);
+        this.lastChange = `backoff ram free:${pct(avg.freeRamRatio)}`;
+        changed = true;
+      } else if (lotsOfHeadroom && avg.avgLaunched > 0.75 && avg.successRatio > 0.85) {
+        this.hackPct = clamp(this.hackPct + 0.0025, this.minHackPct, this.maxHackPct);
+        this.spacer = clamp(this.spacer - 10, this.minSpacer, this.maxSpacer);
+        this.maxBatches = Math.min(this.maxMaxBatches, this.maxBatches + 2);
+        this.lastChange = `push headroom free:${pct(avg.freeRamRatio)}`;
+        changed = true;
+      } else {
+        this.lastChange = `hold free:${pct(avg.freeRamRatio)} jobs:${pct(avg.jobRatio)} batches:${pct(avg.batchRatio)}`;
+      }
+
+      this.lastTuneAt = Date.now();
+      this.recent = [];
+
+      if (changed) {
+        this.lastReason = this.lastChange;
+      }
+    },
+  };
+}
+
+function averageSamples(samples) {
+  let freeRamRatio = 0;
+  let jobRatio = 0;
+  let batchRatio = 0;
+  let avgLaunched = 0;
+  let successRatio = 0;
+  const stallReasons = { RAM: 0, CONCURRENCY: 0, PARTIAL_RAM: 0, NONE: 0 };
+
+  for (const sample of samples) {
+    freeRamRatio += sample.ramStats.freeRatio;
+    jobRatio += sample.activeSummary.activeJobs / Math.max(1, sample.activeSummary.maxJobs ?? 1);
+    batchRatio += sample.activeSummary.activeBatches / Math.max(1, sample.activeSummary.maxBatches ?? 1);
+    avgLaunched += sample.launched > 0 ? 1 : 0;
+    successRatio += sample.requested ? sample.launched / Math.max(1, sample.requested) : (sample.launched > 0 ? 1 : 0);
+
+    if (sample.stallReason === "RAM") stallReasons.RAM++;
+    else if (sample.stallReason === "CONCURRENCY") stallReasons.CONCURRENCY++;
+    else if (sample.stallReason === "PARTIAL_RAM") stallReasons.PARTIAL_RAM++;
+    else stallReasons.NONE++;
+  }
+
+  const count = samples.length;
+  return {
+    freeRamRatio: freeRamRatio / count,
+    jobRatio: jobRatio / count,
+    batchRatio: batchRatio / count,
+    avgLaunched: avgLaunched / count,
+    successRatio: successRatio / count,
+    stallReasons: {
+      RAM: stallReasons.RAM / count,
+      CONCURRENCY: stallReasons.CONCURRENCY / count,
+      PARTIAL_RAM: stallReasons.PARTIAL_RAM / count,
+      NONE: stallReasons.NONE / count,
+    },
+  };
+}
+
+function determineStallReason(availableBatches, fleetLaunchCap, timingCap, jobCap, activeBatchCap, activeSummary, maxActiveJobs, maxActiveBatches) {
+  if (availableBatches <= 0 || fleetLaunchCap <= 0) return "RAM";
+  if (jobCap <= 0 || activeBatchCap <= 0) return "CONCURRENCY";
+  if (activeSummary.activeJobs >= maxActiveJobs || activeSummary.activeBatches >= maxActiveBatches) return "CONCURRENCY";
+  if (timingCap <= 0) return "CONCURRENCY";
+  return "RAM";
 }
 
 function buildBatchTemplate(ns, target, hackPct) {
@@ -485,9 +651,34 @@ function freeRam(ns, host, homeReserve) {
   return Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host) - reserve);
 }
 
-function showStatus(ns, target, money, maxMoney, sec, minSec, mode, template = null) {
+function getFleetRamStats(ns, hosts, homeReserve) {
+  let total = 0;
+  let free = 0;
+
+  for (const host of hosts) {
+    total += Math.max(0, ns.getServerMaxRam(host) - (host === "home" ? homeReserve : 0));
+    free += freeRam(ns, host, homeReserve);
+  }
+
+  return {
+    total,
+    free,
+    used: Math.max(0, total - free),
+    freeRatio: total > 0 ? free / total : 0,
+  };
+}
+
+function showStatus(ns, target, money, maxMoney, sec, minSec, mode, template = null, tuner = null, hosts = null, homeReserve = 0) {
   ns.clearLog();
   ns.print(`Mode: ${mode}`);
+  if (tuner) {
+    ns.print(`Tune: ${tuner.enabled ? 'dynamic' : 'off'} hpct:${(tuner.hackPct * 100).toFixed(2)} spacer:${Math.round(tuner.spacer)} maxB:${Math.round(tuner.maxBatches)}`);
+    ns.print(`Tune note: ${tuner.lastReason}`);
+  }
+  if (hosts) {
+    const ramStats = getFleetRamStats(ns, hosts, homeReserve);
+    ns.print(`Fleet RAM: ${ns.formatRam(ramStats.free)} free / ${ns.formatRam(ramStats.total)} total`);
+  }
   ns.print(`Target: ${target}`);
   ns.print(`Money: ${ns.formatNumber(money, 2)} / ${ns.formatNumber(maxMoney, 2)}`);
   ns.print(`Security: ${sec.toFixed(2)} / ${minSec.toFixed(2)}`);
@@ -500,4 +691,8 @@ function showStatus(ns, target, money, maxMoney, sec, minSec, mode, template = n
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
+}
+
+function pct(n) {
+  return `${(n * 100).toFixed(0)}%`;
 }
