@@ -21,6 +21,14 @@ const scriptsToKillOnHome = [
   "xpGrind.js",
   "xpDistributor.js",
   "stopXpGrind.js",
+
+  // progression scripts
+  "commitCrime.js",
+  "karmaReducer.js",
+  "prepareGang.js",
+  "gangManager.js",
+  "gangFastAscender.js",
+  "progressionManager.js",
 ];
 
 function localeHHMMSS(ms = 0) {
@@ -82,6 +90,7 @@ export async function main(ns) {
 
   // Always rebuild the map after a reset so purchased server changes are reflected.
   const nextScript = scriptToRunAfter || "overlapBatchController.js";
-  ns.tprint(`[${localeHHMMSS()}] Spawning spider.js -> ${nextScript}`);
-  ns.spawn("spider.js", 1, nextScript);
+  const nextArgs = ns.args.slice(1);
+  ns.tprint(`[${localeHHMMSS()}] Spawning spider.js -> ${nextScript} ${nextArgs.join(" ")}`);
+  ns.spawn("spider.js", 1, nextScript, ...nextArgs);
 }
