@@ -4,23 +4,11 @@ export async function main(ns) {
 
     const TUNER_KEY = "bb_tuner_state_v1";
     const LOOP_MS = 5000;
-    const HEARTBEAT_MS = 5 * 60 * 1000;
-    const MONEY_BUCKET_SIZE = 25e9;
+    const HEARTBEAT_MS = 2 * 60 * 1000;
+    const MONEY_BUCKET_SIZE = 10e9;
 
     const HOME_RAM_COST_FALLBACK = 316.788e9;
     const HOME_CORE_COST_FALLBACK = 421.875e9;
-
-    const CONFIG = {
-        minPurchaseRam: 8,
-        maxPurchaseRam: 1048576,
-        buyUtilizationFloor: 0.55,
-        balancedUtilizationFloor: 0.72,
-        saveHomeUtilizationFloor: 0.85,
-        minMoneyToSpendRatio: 0.25,
-        buyServerMoneyRatio: 0.60,
-        balancedMoneyRatio: 0.35,
-        saveHomeMoneyRatio: 0.15,
-    };
 
     let lastLog = {
         policy: null,
@@ -32,6 +20,7 @@ export async function main(ns) {
         lastPrint: 0,
         reserveBucket: null,
         budgetBucket: null,
+        utilBucket: null,
     };
 
     ns.print("Starting playerServers.js");
@@ -44,32 +33,29 @@ export async function main(ns) {
             const homeTarget = ramCost <= coreCost ? "ram" : "cores";
 
             const tuner = readTunerState(TUNER_KEY);
-            const policy = tuner?.invest || "balanced";
+            const controllerPolicy = tuner?.invest || "balanced";
             const ramFreeRatio = Number.isFinite(tuner?.ramFreeRatio) ? tuner.ramFreeRatio : null;
+            const fleetUsedRatio = ramFreeRatio == null ? null : (1 - ramFreeRatio);
             const tuneNote = tuner?.tuneNote || "no-tuner";
             const controllerHackPct = Number.isFinite(tuner?.hackPct) ? tuner.hackPct : null;
             const controllerSpacer = Number.isFinite(tuner?.spacer) ? tuner.spacer : null;
 
-            const reserve = computeReserve({
-                policy,
-                money,
-                ramCost,
-                coreCost,
-            });
-
+            const policy = resolveSpendPolicy(controllerPolicy, fleetUsedRatio);
+            const reserve = computeReserve({ policy, money, ramCost, coreCost });
             const budget = Math.max(0, money - reserve);
 
             const purchasedServers = ns.getPurchasedServers();
             const purchasedCount = purchasedServers.length;
             const currentMinPurchasedRam = getMinPurchasedRam(ns, purchasedServers);
+
             const targetPurchasedRam = decideTargetPurchasedRam({
                 ns,
                 policy,
                 budget,
                 money,
                 ramFreeRatio,
+                fleetUsedRatio,
                 currentMinPurchasedRam,
-                config: CONFIG,
             });
 
             let boughtOrUpgraded = false;
@@ -93,6 +79,7 @@ export async function main(ns) {
                 coreCost,
                 homeTarget,
                 policy,
+                controllerPolicy,
                 tuneNote,
                 affordRam,
                 affordCore,
@@ -103,15 +90,26 @@ export async function main(ns) {
                 moneyBucketSize: MONEY_BUCKET_SIZE,
                 boughtOrUpgraded,
                 ramFreeRatio,
+                fleetUsedRatio,
                 targetPurchasedRam,
             });
-
         } catch (err) {
             ns.print(`ERROR: ${String(err)}`);
         }
 
         await ns.sleep(LOOP_MS);
     }
+}
+
+function resolveSpendPolicy(controllerPolicy, fleetUsedRatio) {
+    if (fleetUsedRatio != null) {
+        if (fleetUsedRatio < 0.20) return "turbo_buy_servers";
+        if (fleetUsedRatio < 0.50) return "buy_servers";
+        if (fleetUsedRatio < 0.75) return "balanced";
+        return "save_home";
+    }
+
+    return controllerPolicy || "balanced";
 }
 
 function maybeLog(ns, ctx) {
@@ -125,6 +123,7 @@ function maybeLog(ns, ctx) {
         coreCost,
         homeTarget,
         policy,
+        controllerPolicy,
         tuneNote,
         affordRam,
         affordCore,
@@ -135,12 +134,14 @@ function maybeLog(ns, ctx) {
         moneyBucketSize,
         boughtOrUpgraded,
         ramFreeRatio,
+        fleetUsedRatio,
         targetPurchasedRam,
     } = ctx;
 
     const moneyBucket = Math.floor(money / moneyBucketSize);
     const reserveBucket = Math.floor(reserve / moneyBucketSize);
     const budgetBucket = Math.floor(budget / moneyBucketSize);
+    const utilBucket = fleetUsedRatio == null ? -1 : Math.floor(fleetUsedRatio * 20);
 
     const shouldLog =
         boughtOrUpgraded ||
@@ -152,11 +153,13 @@ function maybeLog(ns, ctx) {
         moneyBucket !== lastLog.moneyBucket ||
         reserveBucket !== lastLog.reserveBucket ||
         budgetBucket !== lastLog.budgetBucket ||
+        utilBucket !== lastLog.utilBucket ||
         now - lastLog.lastPrint >= heartbeatMs;
 
     if (!shouldLog) return;
 
     const ramFreeText = ramFreeRatio == null ? "n/a" : `${(ramFreeRatio * 100).toFixed(0)}%`;
+    const fleetUsedText = fleetUsedRatio == null ? "n/a" : `${(fleetUsedRatio * 100).toFixed(0)}%`;
     const hackPctText = controllerHackPct == null ? "n/a" : `${(controllerHackPct * 100).toFixed(2)}%`;
     const spacerText = controllerSpacer == null ? "n/a" : `${controllerSpacer}`;
 
@@ -164,7 +167,8 @@ function maybeLog(ns, ctx) {
         `home target=${homeTarget}, ` +
         `ramCost=${fmtMoney(ns, ramCost)}, coreCost=${fmtMoney(ns, coreCost)}, ` +
         `reserve=${fmtMoney(ns, reserve)}, budget=${fmtMoney(ns, budget)}, money=${fmtMoney(ns, money)}, ` +
-        `policy=${policy}, freeRam=${ramFreeText}, hpct=${hackPctText}, spacer=${spacerText}, ` +
+        `policy=${policy}, controller=${controllerPolicy}, used=${fleetUsedText}, freeRam=${ramFreeText}, ` +
+        `hpct=${hackPctText}, spacer=${spacerText}, ` +
         `pservTarget=${targetPurchasedRam > 0 ? ns.formatRam(targetPurchasedRam) : "none"} ` +
         `(${tuneNote})`
     );
@@ -178,6 +182,7 @@ function maybeLog(ns, ctx) {
     lastLog.budgetBucket = budgetBucket;
     lastLog.purchasedCount = purchasedCount;
     lastLog.lastPrint = now;
+    lastLog.utilBucket = utilBucket;
 }
 
 function getHomeRamCost(ns, fallback) {
@@ -214,6 +219,10 @@ function readTunerState(key) {
 function computeReserve({ policy, money, ramCost, coreCost }) {
     const cheaperHomeUpgrade = Math.min(ramCost, coreCost);
 
+    if (policy === "turbo_buy_servers") {
+        return Math.max(2e9, Math.min(cheaperHomeUpgrade * 0.05, money * 0.03));
+    }
+
     if (policy === "buy_servers") {
         return Math.max(5e9, Math.min(cheaperHomeUpgrade * 0.20, money * 0.10));
     }
@@ -225,32 +234,22 @@ function computeReserve({ policy, money, ramCost, coreCost }) {
     return Math.max(7.5e9, Math.min(cheaperHomeUpgrade * 0.50, money * 0.40));
 }
 
-function decideTargetPurchasedRam({ ns, policy, budget, money, ramFreeRatio, currentMinPurchasedRam, config }) {
+function decideTargetPurchasedRam({ ns, policy, budget, money, ramFreeRatio, fleetUsedRatio, currentMinPurchasedRam }) {
     const maxPurchasedRam = ns.getPurchasedServerMaxRam();
     const purchasedLimit = ns.getPurchasedServerLimit();
     const purchasedCount = ns.getPurchasedServers().length;
-    const base = Math.max(config.minPurchaseRam, currentMinPurchasedRam || config.minPurchaseRam);
+    const base = Math.max(8, currentMinPurchasedRam || 8);
 
-    let spendRatio = config.balancedMoneyRatio;
-    let utilFloor = config.balancedUtilizationFloor;
+    let spendRatio;
+    if (policy === "turbo_buy_servers") spendRatio = 0.90;
+    else if (policy === "buy_servers") spendRatio = 0.70;
+    else if (policy === "balanced") spendRatio = 0.40;
+    else spendRatio = 0.15;
 
-    if (policy === "buy_servers") {
-        spendRatio = config.buyServerMoneyRatio;
-        utilFloor = config.buyUtilizationFloor;
-    } else if (policy === "save_home") {
-        spendRatio = config.saveHomeMoneyRatio;
-        utilFloor = config.saveHomeUtilizationFloor;
-    }
-
-    if (ramFreeRatio != null && ramFreeRatio > utilFloor) {
-        spendRatio *= 1.25;
-    }
+    if (ramFreeRatio != null && ramFreeRatio > 0.80) spendRatio *= 1.15;
+    if (fleetUsedRatio != null && fleetUsedRatio < 0.20) spendRatio *= 1.20;
 
     let spendCap = Math.max(0, Math.min(budget, money * spendRatio));
-    if (spendCap < money * config.minMoneyToSpendRatio && policy === "save_home") {
-        spendCap = Math.min(spendCap, budget);
-    }
-
     if (spendCap <= 0) return 0;
 
     let target = base;
@@ -273,7 +272,7 @@ function decideTargetPurchasedRam({ ns, policy, budget, money, ramFreeRatio, cur
         .sort((a, b) => a.ram - b.ram);
 
     for (const server of purchased) {
-        let candidate = Math.max(server.ram * 2, config.minPurchaseRam);
+        let candidate = Math.max(server.ram * 2, 8);
         while (candidate <= maxPurchasedRam) {
             const upgradeCost = ns.getPurchasedServerUpgradeCost(server.host, candidate);
             if (Number.isFinite(upgradeCost) && upgradeCost > 0 && upgradeCost <= spendCap) {
