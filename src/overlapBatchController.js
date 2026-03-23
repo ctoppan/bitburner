@@ -6,20 +6,24 @@ export async function main(ns) {
     const args = parseArgs(ns.args);
 
     let state = {
-        hackPct: clamp(args.hackPct, 0.01, 0.18),
-        spacer: clampInt(args.spacer, 40, 400),
-        homeReserveGb: Math.max(0, Number(args.homeReserveGb) || 128),
-        maxBatches: clampInt(args.maxBatches, 64, 800),
+        hackPct: clamp(args[0] ?? 0.01, 0.01, 0.18),
+        spacer: clampInt(args[1] ?? 300, 30, 400),
+        homeReserveGb: Math.max(0, Number(args[2] ?? 128)),
+        maxBatches: clampInt(args[3] ?? 24, 64, 800),
         maxJobs: 3200,
         tuneNote: "init",
         invest: "balanced",
         mode: "BATCH",
         lastTuneAt: 0,
         lastTarget: null,
+        lastTargetScore: 0,
+        lastTargetSwitchAt: 0,
     };
 
-    const TUNE_INTERVAL = 30_000;
+    const TUNE_INTERVAL = 30000;
     const LOOP_SLEEP = 1500;
+    const TARGET_HOLD_MS = 120000;
+    const TARGET_SWITCH_MULTIPLIER = 1.15;
     const TUNER_KEY = "bb_tuner_state_v1";
 
     while (true) {
@@ -28,7 +32,10 @@ export async function main(ns) {
             const workers = rooted.filter(s => ns.getServerMaxRam(s) > 0);
             const fleet = getFleetRam(ns, workers, state.homeReserveGb);
 
-            const target = pickBestTarget(ns, fleet);
+            const rankedTargets = rankTargets(ns, fleet).slice(0, 5);
+            const selected = selectTarget(ns, state, fleet, rankedTargets);
+            const target = selected.target;
+            const targetScore = selected.score;
             const targetInfo = getTargetInfo(ns, target);
 
             const activeJobs = countActiveBatchJobs(ns, rooted);
@@ -44,6 +51,7 @@ export async function main(ns) {
                 invest: state.invest,
                 tuneNote: state.tuneNote,
                 target,
+                targetScore,
                 fleetFreeRam: fleet.free,
                 fleetTotalRam: fleet.total,
                 ramFreeRatio: fleet.total > 0 ? fleet.free / fleet.total : 0,
@@ -58,9 +66,11 @@ export async function main(ns) {
             if (state.lastTarget !== target) {
                 ns.print(`[overlapBatchController.js] Target selected: ${target}`);
                 state.lastTarget = target;
+                state.lastTargetScore = targetScore;
+                state.lastTargetSwitchAt = Date.now();
             }
 
-            renderTail(ns, buildSummary(ns, state, fleet, target, targetInfo, activeJobs, activeBatches));
+            renderTail(ns, buildSummary(ns, state, fleet, target, targetScore, targetInfo, activeJobs, activeBatches, rankedTargets));
 
             if (canLaunchMore(state, activeJobs, activeBatches, fleet)) {
                 await tryLaunchBatch(ns, workers, target, state, targetInfo, fleet);
@@ -75,16 +85,18 @@ export async function main(ns) {
 }
 
 function parseArgs(args) {
-    return {
-        hackPct: Number(args[0] ?? 0.01),
-        spacer: Number(args[1] ?? 300),
-        homeReserveGb: Number(args[2] ?? 128),
-        maxBatches: Number(args[3] ?? 24),
-    };
+    return [
+        Number(args[0] ?? 0.01),
+        Number(args[1] ?? 300),
+        Number(args[2] ?? 128),
+        Number(args[3] ?? 24),
+    ];
 }
 
 function clamp(v, min, max) {
-    return Math.min(Math.max(Number(v) || 0, min), max);
+    const n = Number(v);
+    if (!Number.isFinite(n)) return min;
+    return Math.min(Math.max(n, min), max);
 }
 
 function clampInt(v, min, max) {
@@ -100,7 +112,7 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     const jobPressure = state.maxJobs > 0 ? activeJobs / state.maxJobs : 1;
     const batchPressure = state.maxBatches > 0 ? activeBatches / state.maxBatches : 1;
 
-    if (ramFreeRatio > 0.90) {
+    if (ramFreeRatio > 0.9) {
         state.hackPct = clamp(state.hackPct * 1.18, 0.03, 0.18);
         state.spacer = clampInt(Math.floor(state.spacer * 0.92), 30, 400);
         state.maxBatches = clampInt(state.maxBatches + 24, 64, 800);
@@ -110,7 +122,7 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
         return;
     }
 
-    if (ramFreeRatio > 0.70) {
+    if (ramFreeRatio > 0.7) {
         state.hackPct = clamp(state.hackPct * 1.10, 0.02, 0.16);
         state.spacer = clampInt(Math.floor(state.spacer * 0.95), 35, 400);
         state.maxBatches = clampInt(state.maxBatches + 12, 64, 800);
@@ -120,7 +132,7 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
         return;
     }
 
-    if (ramFreeRatio < 0.10) {
+    if (ramFreeRatio < 0.1) {
         state.hackPct = clamp(state.hackPct * 0.88, 0.01, 0.15);
         state.spacer = clampInt(Math.floor(state.spacer * 1.15), 40, 500);
         state.maxBatches = clampInt(state.maxBatches - 16, 32, 800);
@@ -168,7 +180,7 @@ async function tryLaunchBatch(ns, workers, target, state, targetInfo, fleet) {
     const hackFraction = clamp(state.hackPct, 0.03, 0.18);
 
     let hackThreads = Math.max(4, Math.floor(ns.hackAnalyzeThreads(target, moneyMax * hackFraction) || 4));
-    const growMultiplier = 1 / Math.max(0.01, (1 - hackFraction));
+    const growMultiplier = 1 / Math.max(0.01, 1 - hackFraction);
     let growThreads = Math.max(20, Math.ceil(ns.growthAnalyze(target, growMultiplier) || 20));
     let weakenHackThreads = Math.max(1, Math.ceil((hackThreads * 0.002) / 0.05));
     let weakenGrowThreads = Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
@@ -226,7 +238,9 @@ function launchDistributed(ns, workers, script, threads, args, homeReserveGb) {
         if (host !== "home") ns.scp(script, host, "home");
 
         const pid = ns.exec(script, host, use, ...args);
-        if (pid !== 0) remaining -= use;
+        if (pid !== 0) {
+            remaining -= use;
+        }
 
         if (remaining <= 0) return true;
     }
@@ -268,7 +282,11 @@ function getFleetRam(ns, servers, homeReserveGb) {
         used += use;
     }
 
-    return { total, used, free: Math.max(0, total - used) };
+    return {
+        total,
+        used,
+        free: Math.max(0, total - used),
+    };
 }
 
 function getServerFreeRam(ns, host, homeReserveGb = 0) {
@@ -282,44 +300,72 @@ function getServerFreeRam(ns, host, homeReserveGb = 0) {
     return Math.max(0, max - used);
 }
 
-function pickBestTarget(ns, fleet) {
+function selectTarget(ns, state, fleet, rankedTargets) {
+    if (!rankedTargets.length) {
+        return { target: "n00dles", score: 0 };
+    }
+
+    const best = rankedTargets[0];
+    if (!state.lastTarget) return best;
+
+    const currentScore = scoreSingleTarget(ns, state.lastTarget, fleet);
+    const enoughTimePassed = (Date.now() - state.lastTargetSwitchAt) > 120000;
+    const meaningfullyBetter = best.score > (currentScore * 1.15);
+
+    if (!enoughTimePassed && !meaningfullyBetter) {
+        return { target: state.lastTarget, score: currentScore };
+    }
+
+    return best;
+}
+
+function rankTargets(ns, fleet) {
     const servers = getRootedServers(ns)
         .filter(s => ns.getServerMaxMoney(s) > 0)
         .filter(s => ns.getServerRequiredHackingLevel(s) <= ns.getHackingLevel())
         .filter(s => s !== "home");
 
-    if (servers.length === 0) return "n00dles";
+    if (!servers.length) return [{ target: "n00dles", score: 0 }];
 
-    const ramFreeRatio = fleet.total > 0 ? fleet.free / fleet.total : 0;
-    const earlyBias = ramFreeRatio > 0.5;
-
-    let best = servers[0];
-    let bestScore = -Infinity;
-
+    const ranked = [];
     for (const s of servers) {
-        const maxMoney = Math.max(1, ns.getServerMaxMoney(s));
-        const minSec = Math.max(1, ns.getServerMinSecurityLevel(s));
-        const curSec = Math.max(minSec, ns.getServerSecurityLevel(s));
-        const hackTime = Math.max(1, ns.getHackTime(s));
-        const chance = Math.max(0.01, ns.hackAnalyzeChance(s));
-        const moneyAvail = ns.getServerMoneyAvailable(s);
-        const moneyRatio = maxMoney > 0 ? moneyAvail / maxMoney : 0;
-        const prepPenalty = (curSec / minSec) * (moneyRatio < 0.75 ? 1.4 : 1.0);
-
-        let score;
-        if (earlyBias) {
-            score = (Math.sqrt(maxMoney) * chance) / (hackTime * prepPenalty);
-        } else {
-            score = (maxMoney * chance) / (hackTime * minSec * prepPenalty);
-        }
-
-        if (score > bestScore) {
-            bestScore = score;
-            best = s;
-        }
+        ranked.push({ target: s, score: scoreSingleTarget(ns, s, fleet) });
     }
 
-    return best;
+    ranked.sort((a, b) => b.score - a.score);
+    return ranked;
+}
+
+function scoreSingleTarget(ns, server, fleet) {
+    const ramFreeRatio = fleet.total > 0 ? fleet.free / fleet.total : 0;
+    const speedBias = ramFreeRatio > 0.50;
+
+    const maxMoney = Math.max(1, ns.getServerMaxMoney(server));
+    const moneyAvail = Math.max(0, ns.getServerMoneyAvailable(server));
+    const moneyRatio = maxMoney > 0 ? moneyAvail / maxMoney : 0;
+
+    const minSec = Math.max(1, ns.getServerMinSecurityLevel(server));
+    const curSec = Math.max(minSec, ns.getServerSecurityLevel(server));
+    const secPenalty = curSec / minSec;
+
+    const hackTime = Math.max(1, ns.getHackTime(server));
+    const growTime = Math.max(1, ns.getGrowTime(server));
+    const weakenTime = Math.max(1, ns.getWeakenTime(server));
+    const chance = Math.max(0.01, ns.hackAnalyzeChance(server));
+
+    const cycleTime = Math.max(hackTime, growTime, weakenTime);
+
+    let prepPenalty = 1;
+    if (moneyRatio < 0.90) prepPenalty *= 1.35;
+    if (curSec > minSec + 1) prepPenalty *= 1.25;
+    prepPenalty *= secPenalty;
+
+    const readyBonus = 0.5 + (moneyRatio * 0.5);
+    const baseValuePerSec = (maxMoney * chance) / cycleTime;
+    const speedFactor = speedBias ? (1000 / cycleTime) : 1;
+    const moneyFactor = speedBias ? Math.sqrt(maxMoney) : maxMoney;
+
+    return ((moneyFactor * chance * readyBonus) / prepPenalty) * speedFactor * baseValuePerSec;
 }
 
 function getTargetInfo(ns, target) {
@@ -374,25 +420,43 @@ function publishTunerState(key, payload) {
     } catch {}
 }
 
-function buildSummary(ns, state, fleet, target, targetInfo, activeJobs, activeBatches) {
-    return [
+function buildSummary(ns, state, fleet, target, targetScore, targetInfo, activeJobs, activeBatches, rankedTargets) {
+    const lines = [
         `Mode: ${state.mode} x1 avail:${Math.floor(fleet.free)} fleet:${Math.floor(fleet.total)} time:${new Date().getSeconds()}`,
         `jobs:${activeJobs}/${state.maxJobs} batches:${activeBatches}/${state.maxBatches}`,
         `Tune: dynamic hpct:${(state.hackPct * 100).toFixed(2)} spacer:${state.spacer} maxB:${state.maxBatches}`,
         `Invest: ${state.invest}`,
         `Tune note: ${state.tuneNote}`,
         `Fleet RAM: ${ns.formatRam(fleet.free)} free / ${ns.formatRam(fleet.total)} total`,
-        `Target: ${target}`,
+        `Target: ${target} score:${formatScore(targetScore)}`,
         `Money: ${ns.formatNumber(targetInfo.money)} / ${ns.formatNumber(targetInfo.moneyMax)}`,
         `Security: ${targetInfo.sec.toFixed(2)} / ${targetInfo.secMin.toFixed(2)}`,
+        `Top targets:`,
     ];
+
+    for (const row of rankedTargets) {
+        lines.push(`  ${row.target.padEnd(18, " ")} ${formatScore(row.score)}`);
+    }
+
+    return lines;
 }
 
 function renderTail(ns, lines) {
     ns.clearLog();
-    for (const line of lines) ns.print(line);
+    for (const line of lines) {
+        ns.print(line);
+    }
 }
 
 function pct(v) {
     return `${(v * 100).toFixed(0)}%`;
+}
+
+function formatScore(v) {
+    if (!Number.isFinite(v)) return "0";
+    if (v >= 1e12) return `${(v / 1e12).toFixed(2)}t`;
+    if (v >= 1e9) return `${(v / 1e9).toFixed(2)}b`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(2)}m`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(2)}k`;
+    return v.toFixed(2);
 }
