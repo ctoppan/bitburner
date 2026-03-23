@@ -7,8 +7,8 @@ const settings = {
 
   // Pre-Singularity fallback for home upgrades:
   // Update these to the next visible costs from the Home screen after each purchase.
-  targetHomeRamCost: 316.788e9,
-  targetHomeCoreCost: 421.875e9,
+  targetHomeRamCost: 316.788e15,
+  targetHomeCoreCost: 421.875e15,
 
   // Prefer RAM unless cores are much cheaper
   preferHomeRamOverCores: true,
