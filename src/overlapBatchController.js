@@ -10,7 +10,7 @@ export async function main(ns) {
         spacer: clampInt(argSpacer, 40, 500),
         homeReserveGb: Math.max(0, Number(argHomeReserveGb)),
         maxBatches: clampInt(argMaxBatches, 16, 512),
-        maxJobs: 6000,
+        maxJobs: 12000,
         tuneNote: "init",
         invest: "balanced",
         mode: "MULTI",
@@ -26,7 +26,7 @@ export async function main(ns) {
     const TARGET_SWITCH_MULTIPLIER = 1.35;
     const MAX_LAUNCHES_PER_LOOP = 12;
     const MIN_BATCH_FREE_RAM = 64;
-    const TUNER_KEY = "bb_tuner_state_v3";
+    const TUNER_KEY = "bb_tuner_state_v4";
 
     while (true) {
         try {
@@ -35,7 +35,7 @@ export async function main(ns) {
             const fleet = getFleetRam(ns, workers, state.homeReserveGb);
 
             const rankedTargets = rankTargets(ns, fleet);
-            const activeTargetPool = chooseActiveTargets(rankedTargets, fleet);
+            const activeTargetPool = chooseActiveTargets(rankedTargets);
             const selected = selectPrimaryTarget(ns, state, fleet, activeTargetPool, TARGET_HOLD_MS, TARGET_SWITCH_MULTIPLIER);
             const primaryTarget = selected.target;
             const primaryScore = selected.score;
@@ -92,7 +92,7 @@ export async function main(ns) {
                     continue;
                 }
 
-                const launchTarget = pickLaunchTarget(ns, activeTargetPool);
+                const launchTarget = pickLaunchTarget(activeTargetPool);
                 if (!launchTarget) break;
 
                 const targetInfo = getTargetInfo(ns, launchTarget.target);
@@ -133,10 +133,10 @@ export async function main(ns) {
 
 function parseArgs(args) {
     return [
-        Number(args[0] ?? 0.02),
-        Number(args[1] ?? 200),
+        Number(args[0] ?? 0.03),
+        Number(args[1] ?? 150),
         Number(args[2] ?? 128),
-        Number(args[3] ?? 64),
+        Number(args[3] ?? 96),
     ];
 }
 
@@ -160,10 +160,10 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     const batchPressure = state.maxBatches > 0 ? activeBatches / state.maxBatches : 1;
 
     if (ramFreeRatio > 0.90) {
-        state.hackPct = clamp(state.hackPct * 1.20, 0.02, 0.15);
+        state.hackPct = clamp(state.hackPct * 1.20, 0.03, 0.15);
         state.spacer = clampInt(Math.floor(state.spacer * 0.90), 40, 500);
         state.maxBatches = clampInt(state.maxBatches + 32, 16, 512);
-        state.maxJobs = clampInt(state.maxJobs + 400, 800, 12000);
+        state.maxJobs = clampInt(state.maxJobs + 400, 1200, 20000);
         state.invest = "buy_servers";
         state.mode = "MULTI";
         state.tuneNote = `ramp_hard free:${pct(ramFreeRatio)}`;
@@ -171,10 +171,10 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     }
 
     if (ramFreeRatio > 0.70) {
-        state.hackPct = clamp(state.hackPct * 1.10, 0.02, 0.12);
-        state.spacer = clampInt(Math.floor(state.spacer * 0.94), 50, 500);
+        state.hackPct = clamp(state.hackPct * 1.10, 0.03, 0.12);
+        state.spacer = clampInt(Math.floor(state.spacer * 0.94), 40, 500);
         state.maxBatches = clampInt(state.maxBatches + 16, 16, 512);
-        state.maxJobs = clampInt(state.maxJobs + 250, 800, 12000);
+        state.maxJobs = clampInt(state.maxJobs + 250, 1200, 20000);
         state.invest = "buy_servers";
         state.mode = "MULTI";
         state.tuneNote = `ramp_up free:${pct(ramFreeRatio)}`;
@@ -185,14 +185,14 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
         state.hackPct = clamp(state.hackPct * 0.88, 0.01, 0.10);
         state.spacer = clampInt(Math.floor(state.spacer * 1.12), 60, 700);
         state.maxBatches = clampInt(state.maxBatches - 8, 8, 512);
-        state.maxJobs = clampInt(state.maxJobs - 250, 800, 12000);
+        state.maxJobs = clampInt(state.maxJobs - 250, 1200, 20000);
         state.invest = "save_home";
         state.tuneNote = `backoff_ram_limited free:${pct(ramFreeRatio)}`;
         return;
     }
 
     if (jobPressure > 0.95 && ramFreeRatio > 0.25) {
-        state.maxJobs = clampInt(state.maxJobs + 300, 800, 12000);
+        state.maxJobs = clampInt(state.maxJobs + 300, 1200, 20000);
         state.tuneNote = `raise_jobs jobs:${pct(jobPressure)}`;
         return;
     }
@@ -416,12 +416,10 @@ function getServerFreeRam(ns, host, homeReserveGb = 0) {
     return Math.max(0, max - used);
 }
 
-function chooseActiveTargets(rankedTargets, fleet) {
+function chooseActiveTargets(rankedTargets) {
     if (!rankedTargets.length) return [];
 
     const best = rankedTargets[0];
-    if (!best) return [];
-
     const pool = [best];
 
     for (let i = 1; i < rankedTargets.length && pool.length < 3; i++) {
@@ -434,7 +432,7 @@ function chooseActiveTargets(rankedTargets, fleet) {
     return pool;
 }
 
-function pickLaunchTarget(ns, activeTargetPool) {
+function pickLaunchTarget(activeTargetPool) {
     if (!activeTargetPool.length) return null;
 
     const totalScore = activeTargetPool.reduce((sum, t) => sum + Math.max(0.0001, t.score), 0);
@@ -468,10 +466,18 @@ function selectPrimaryTarget(ns, state, fleet, activeTargetPool, holdMs, switchM
 }
 
 function rankTargets(ns, fleet) {
+    const playerHack = ns.getHackingLevel();
+
     const servers = getRootedServers(ns)
+        .filter(s => s !== "home")
         .filter(s => ns.getServerMaxMoney(s) > 0)
-        .filter(s => ns.getServerRequiredHackingLevel(s) <= ns.getHackingLevel())
-        .filter(s => s !== "home");
+        .filter(s => ns.getServerRequiredHackingLevel(s) <= playerHack)
+        .filter(s => {
+            const maxMoney = ns.getServerMaxMoney(s);
+            if (playerHack > 1000) return maxMoney >= 1e9;
+            if (playerHack > 500) return maxMoney >= 1e8;
+            return true;
+        });
 
     if (!servers.length) return [{ target: "n00dles", score: 0 }];
 
@@ -485,8 +491,13 @@ function rankTargets(ns, fleet) {
 }
 
 function scoreSingleTarget(ns, server, fleet) {
-    const maxMoney = Math.max(1, ns.getServerMaxMoney(server));
-    const moneyAvail = Math.max(0, ns.getServerMoneyAvailable(server));
+    const maxMoney = ns.getServerMaxMoney(server);
+    if (maxMoney <= 0) return 0;
+
+    const playerHack = ns.getHackingLevel();
+    if (maxMoney < 1e9 && playerHack > 1000) return 0;
+
+    const moneyAvail = ns.getServerMoneyAvailable(server);
     const moneyRatio = maxMoney > 0 ? moneyAvail / maxMoney : 0;
 
     const minSec = Math.max(1, ns.getServerMinSecurityLevel(server));
@@ -495,12 +506,11 @@ function scoreSingleTarget(ns, server, fleet) {
 
     const chance = Math.max(0.01, ns.hackAnalyzeChance(server));
     const weakenTime = Math.max(1, ns.getWeakenTime(server));
-    const prepPenalty = needsPrep({
-        moneyRatio,
-        secAboveMin: Math.max(0, curSec - minSec),
-    }) ? 0.35 : 1.0;
 
-    return (Math.sqrt(maxMoney) * chance * (0.25 + moneyRatio * 0.75) * prepPenalty) / weakenTime / secPenalty;
+    const value = Math.pow(maxMoney, 0.9);
+    const prepPenalty = (moneyRatio < 0.75 || (curSec - minSec) > 2) ? 0.5 : 1.0;
+
+    return (value * chance * prepPenalty) / weakenTime / secPenalty;
 }
 
 function getTargetInfo(ns, target) {
