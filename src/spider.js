@@ -37,7 +37,6 @@ export async function main(ns) {
   ns.tprint(`[${localeHHMMSS()}] Starting spider.js`)
 
   const scriptToRunAfter = ns.args[0]
-  const scriptArgs = ns.args.slice(1)
 
   let hostname = ns.getHostname()
 
@@ -147,6 +146,6 @@ export async function main(ns) {
     ns.spawn('mainHack.js', 1)
   } else {
     ns.tprint(`[${localeHHMMSS()}] Spawning ${scriptToRunAfter}`)
-    ns.spawn(scriptToRunAfter, 1, ...scriptArgs)
+    ns.spawn(scriptToRunAfter, 1)
   }
 }

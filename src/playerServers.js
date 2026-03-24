@@ -2,15 +2,13 @@
 export async function main(ns) {
     ns.disableLog("ALL");
 
-    // Modes:
-    // "growth"         = spend aggressively on purchased servers
-    // "balanced"       = moderate spending
-    // "save_for_augs"  = preserve a large cash reserve for augment purchases
-    const SPEND_MODE = "balanced";
+    // Default mode if no saved setting exists:
+    // "growth" | "balanced" | "save_for_augs"
+    const DEFAULT_SPEND_MODE = "balanced";
+    const DEFAULT_AUG_RESERVE = 75e9;
 
-    // Only used in save_for_augs mode
-    const AUG_RESERVE = 75e9;
-
+    const MODE_KEY = "bb_spend_mode_v1";
+    const AUG_RESERVE_KEY = "bb_aug_reserve_v1";
     const TUNER_KEY = "bb_tuner_state_v1";
     const LOOP_MS = 5000;
     const HEARTBEAT_MS = 2 * 60 * 1000;
@@ -32,16 +30,19 @@ export async function main(ns) {
         utilBucket: null,
     };
 
-    ns.print(`Starting playerServers.js mode=${SPEND_MODE}`);
+    ns.print(`Starting playerServers.js mode=${DEFAULT_SPEND_MODE}`);
 
     while (true) {
         try {
+            const spendMode = readStoredJson(MODE_KEY) || DEFAULT_SPEND_MODE;
+            const augReserve = readStoredNumber(AUG_RESERVE_KEY, DEFAULT_AUG_RESERVE);
+
             const money = ns.getServerMoneyAvailable("home");
             const ramCost = getHomeRamCost(ns, HOME_RAM_COST_FALLBACK);
             const coreCost = getHomeCoreCost(ns, HOME_CORE_COST_FALLBACK);
             const homeTarget = ramCost <= coreCost ? "ram" : "cores";
 
-            const tuner = readTunerState(TUNER_KEY);
+            const tuner = readStoredJson(TUNER_KEY);
             const controllerPolicy = tuner?.invest || "balanced";
             const ramFreeRatio = Number.isFinite(tuner?.ramFreeRatio) ? tuner.ramFreeRatio : null;
             const fleetUsedRatio = ramFreeRatio == null ? null : (1 - ramFreeRatio);
@@ -49,14 +50,14 @@ export async function main(ns) {
             const controllerHackPct = Number.isFinite(tuner?.hackPct) ? tuner.hackPct : null;
             const controllerSpacer = Number.isFinite(tuner?.spacer) ? tuner.spacer : null;
 
-            const policy = resolveSpendPolicy(SPEND_MODE, controllerPolicy, fleetUsedRatio);
+            const policy = resolveSpendPolicy(spendMode, controllerPolicy, fleetUsedRatio);
 
             const reserve = computeReserve({
                 policy,
                 money,
                 ramCost,
                 coreCost,
-                augReserve: AUG_RESERVE,
+                augReserve,
             });
 
             const budget = Math.max(0, money - reserve);
@@ -97,7 +98,7 @@ export async function main(ns) {
                 homeTarget,
                 policy,
                 controllerPolicy,
-                spendMode: SPEND_MODE,
+                spendMode,
                 tuneNote,
                 affordRam,
                 affordCore,
@@ -236,7 +237,7 @@ function getHomeCoreCost(ns, fallback) {
     return fallback;
 }
 
-function readTunerState(key) {
+function readStoredJson(key) {
     try {
         if (typeof localStorage === "undefined") return null;
         const raw = localStorage.getItem(key);
@@ -245,6 +246,11 @@ function readTunerState(key) {
     } catch {
         return null;
     }
+}
+
+function readStoredNumber(key, fallback) {
+    const value = readStoredJson(key);
+    return Number.isFinite(value) ? value : fallback;
 }
 
 function computeReserve({ policy, money, ramCost, coreCost, augReserve }) {

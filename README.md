@@ -1,18 +1,24 @@
-# Bitburner Automation Starter
+# Bitburner Automation Starter (Enhanced)
 
-This repo is set up as an opinionated Bitburner automation stack with a small bootstrap, a safer hacking controller, and gang automation without auto-starting crime scripts.
+This repo is an opinionated Bitburner automation stack with:
 
-The goals of this version are:
-- keep startup simple
-- avoid runaway batch spam that can freeze the game
-- automate the common hacking -> gang progression path
-- leave browser-only helpers manual
+* dynamic hacking controller (auto-tunes itself)
+* smart purchased server scaling
+* optional gang automation
+* safe defaults to prevent game freezes
+* manual toggles for **money vs growth**
 
-## Quick Start
+---
 
-1. Create a fresh `start.js` on `home`.
-2. Paste in the bootstrap below.
-3. Run `run start.js`.
+## 🚀 Quick Start
+
+1. Create `start.js` on `home`
+2. Paste the bootstrap below
+3. Run:
+
+```txt
+run start.js
+```
 
 ```javascript
 /** @param {NS} ns **/
@@ -43,190 +49,343 @@ export async function main(ns) {
 }
 ```
 
-## What `start.js` Does
+---
 
-`start.js` is intentionally tiny.
+## 🧠 System Overview
 
-It only:
-- downloads the latest `initHacking.js`
-- launches it
-
-All real orchestration lives in `initHacking.js`.
-
-## What `initHacking.js` Does
-
-`initHacking.js` is the main entry point for the repo.
-
-It:
-- downloads the current script set from this repo
-- clears old runtime state used by the hacking stack
-- starts `killAll.js` to reset workers cleanly
-- launches the safer overlap batch controller by default
-- starts `playerServers.js`
-- starts `progressionManager.js`
-
-By default it uses a conservative overlap batch setup to reduce the odds of Bitburner hanging or black-screening from too many queued jobs.
-
-## Automated Runtime Flow
-
-After `run start.js`, the intended flow is:
-
-1. `start.js`
-2. `initHacking.js`
-3. `killAll.js`
-4. `overlapBatchController.js`
-5. `playerServers.js`
-6. `progressionManager.js`
-
-### Hacking
-
-The default hacking engine is:
-- `overlapBatchController.js`
-
-It manages:
-- `prepTarget.js`
-- `batchHack.js`
-- `batchGrow.js`
-- `batchWeaken.js`
-
-This controller has been tuned to be safer than the older versions by capping active jobs and active batches.
-
-### Crime and Gang Progression
-
-`progressionManager.js` handles progression outside pure hacking.
-
-It will:
-- run crime automation if Singularity crime functions are available
-- use `karmaReducer.js` when you already belong to a gang-capable faction but still need karma
-- use `commitCrime.js` when money or general crime progression makes more sense
-- attempt to create a gang automatically when possible
-- start `prepareGang.js` and `gangManager.js` once the gang exists
-
-## Scripts That Are Automated
-
-These should generally not be started by hand during normal play:
-
-- `initHacking.js`
-- `killAll.js`
-- `overlapBatchController.js`
-- `playerServers.js`
-- `progressionManager.js`
-
-`playerServers.js` reserves money for the next manual home RAM/core purchase, but it no longer pops up repeated terminal warnings by default.
-- `prepareGang.js`
-- `gangManager.js`
-- `prepTarget.js`
-- `batchHack.js`
-- `batchGrow.js`
-- `batchWeaken.js`
-- `grow.js`
-- `hack.js`
-- `weaken.js`
-- `runHacking.js`
-- `spider.js`
-- `mainHack.js`
-
-## Manual Scripts
-
-These are the scripts that should stay manual and belong in a separate README section.
-
-### Browser-only helpers
-
-Do not run these with `run` or `exec`.
-
-- `browserAutoHack.js`
-- `hackingMission.js`
-
-These interact with the browser DOM and are meant for the browser console, not the Netscript runtime.
-
-### Situational manual script
-
-- `gangFastAscender.js`
-
-This is best treated as a manual gang utility rather than part of the default always-on automation path.
-
-### Optional manual control scripts
-
-These are runnable Netscript scripts, but they are manual-only by default:
-
-- `commitCrime.js`
-- `karmaReducer.js`
-- `getCrimesData.js`
-- `getCrimesData2.js`
-
-You can still run them manually for testing or debugging.
-
-## Safety Notes
-
-### Do not run multiple hacking controllers together
-
-Only run one controller family at a time.
-
-Do not mix:
-- `mainHack.js`
-- `runHacking.js`
-- `batchController.js`
-- `overlapBatchController.js`
-
-If you want to switch controllers, run `start.js` again or kill the old controller first.
-
-### Why the game was hanging
-
-The most likely cause was the hacking layer launching too many overlapping jobs too quickly.
-
-This repo now uses safer defaults and additional caps in `overlapBatchController.js` to reduce that risk, but Bitburner can still get unstable if:
-- you lower spacing too aggressively
-- you raise hack percent too aggressively
-- you launch multiple controller families at once
-- home RAM gets crowded by too many side scripts
-
-## Crime Script Notes
-
-The crime scripts were updated to work more cleanly with modern Bitburner installs.
-
-They now:
-- prefer the newer Singularity crime functions when available
-- use modern crime names
-- avoid the deprecated `ns.isBusy()` path that can fail on newer installs
-- handle crime timing more safely
-- stop automatically once gang-karma thresholds are met in the homicide loop
-
-Crime automation still depends on having access to the relevant Singularity functions.
-
-## Gang Notes
-
-Gang automation assumes:
-- the gang API is available
-- you have joined a faction that can form a gang
-
-`progressionManager.js` will try to create the gang automatically once those conditions are met.
-
-## Recommended Usage
-
-For normal use:
+### Boot Flow
 
 ```text
-run start.js
+start.js
+→ initHacking.js
+→ killAll.js
+→ overlapBatchController.js
+→ playerServers.js
+→ progressionManager.js
 ```
 
-For manual gang optimization later:
+---
 
-```text
+## 💰 Hacking Engine (Core)
+
+### overlapBatchController.js
+
+This is the main engine.
+
+It dynamically:
+
+* selects most profitable targets
+* scales batch size based on RAM
+* adjusts hack %, spacing, concurrency
+* prevents runaway job spam
+* uses **adaptive tuning**
+
+### Key Features
+
+* dynamic target switching
+* RAM-aware scaling (PB-safe)
+* anti-thrashing target logic
+* fleet utilization tracking
+* real-time tuning display
+
+---
+
+## ⚙️ Dynamic Investment System
+
+### playerServers.js (NEW MODES)
+
+You now have **3 spending modes**:
+
+### 🔥 growth
+
+* aggressively buys/upgrades servers
+* fastest long-term scaling
+* low visible cash
+
+```txt
+run setSpendMode.js growth
+```
+
+---
+
+### ⚖️ balanced
+
+* moderate reinvestment
+* default mode
+
+```txt
+run setSpendMode.js balanced
+```
+
+---
+
+### 💸 save_for_augs
+
+* preserves money for augment purchases
+* minimal server spending
+
+```txt
+run setSpendMode.js save_for_augs 75000000000
+```
+
+(75b reserve example)
+
+---
+
+## 🧰 New Helper Scripts
+
+### setSpendMode.js
+
+Switch modes without editing code:
+
+```txt
+run setSpendMode.js growth
+run setSpendMode.js balanced
+run setSpendMode.js save_for_augs 75000000000
+```
+
+---
+
+### fleetfree.js
+
+Check RAM usage:
+
+```txt
+run fleetfree.js
+```
+
+Output:
+
+* total RAM
+* used RAM
+* free RAM
+
+---
+
+## 📈 Growth vs Cash Strategy
+
+### Growth Mode (scale faster)
+
+Run:
+
+```txt
+run setSpendMode.js growth
+```
+
+Use when:
+
+* early/mid game
+* building server fleet
+* not buying augs yet
+
+---
+
+### Cash Mode (buy augs)
+
+Run:
+
+```txt
+run setSpendMode.js save_for_augs 75000000000
+```
+
+Use when:
+
+* close to augment purchase
+* need liquid money
+* want to stop reinvestment
+
+---
+
+## 🧑‍🤝‍🧑 Faction + Augment Strategy
+
+Best approach:
+
+1. Work for faction (BitRunners, etc.)
+2. Switch to `save_for_augs`
+3. Let hacking stack generate cash
+4. Buy key augments
+5. Install
+6. Return to `growth`
+
+---
+
+## 🤖 Scripts That Auto-Run
+
+Do NOT run manually:
+
+* initHacking.js
+* killAll.js
+* overlapBatchController.js
+* playerServers.js
+* progressionManager.js
+* spider.js
+* prepTarget.js
+* batchHack.js
+* batchGrow.js
+* batchWeaken.js
+
+---
+
+## 🧪 Manual Scripts
+
+### Useful tools
+
+* `setSpendMode.js`
+* `fleetfree.js`
+* `stopXpGrind.js`
+
+---
+
+### Optional manual scripts
+
+* commitCrime.js
+* karmaReducer.js
+* getCrimesData.js
+* getCrimesData2.js
+
+⚠️ Crime automation is **disabled by default**
+
+---
+
+### Browser-only (DO NOT run via Netscript)
+
+* browserAutoHack.js
+* hackingMission.js
+
+Use in browser console only.
+
+---
+
+## 🧠 Gang Automation
+
+Handled by:
+
+* progressionManager.js
+* prepareGang.js
+* gangManager.js
+
+Auto:
+
+* creates gang when possible
+* starts management
+
+Manual helper:
+
+```txt
 run gangFastAscender.js
 ```
 
-For browser helpers:
-- open the browser console
-- paste `browserAutoHack.js` or `hackingMission.js`
+---
 
-## Repo Source
+## ⚠️ Safety Notes
 
-This repo pulls files from:
-- `ctoppan/bitburner`
+### Avoid crashes / black screen
 
-Running `start.js` refreshes the local copies from the repo, so local manual edits will be overwritten unless they are committed upstream.
+Do NOT:
 
+* run multiple controllers
+* reduce spacer too aggressively
+* increase hack % too fast
 
-## Crime automation
+---
 
-Crime scripts are no longer auto-started. If you want to use them, run `commitCrime.js` or `karmaReducer.js` manually.
+### Only run ONE controller
+
+Do NOT mix:
+
+* overlapBatchController.js
+* mainHack.js
+* runHacking.js
+* batchController.js
+
+---
+
+## 🧩 Why Money Sometimes Looks Low
+
+If you see low money:
+
+✔️ likely cause:
+
+* being reinvested into servers
+
+Fix:
+
+```txt
+run setSpendMode.js save_for_augs
+```
+
+---
+
+## 📊 Understanding Your Output
+
+Controller window shows:
+
+* `avail` → free RAM
+* `jobs/batches` → concurrency usage
+* `hackPct` → aggressiveness
+* `target score` → profitability
+* `invest` → current strategy
+
+---
+
+## 🔁 Updating Scripts
+
+Run:
+
+```txt
+run start.js
+```
+
+This will:
+
+* re-download all scripts
+* reset system cleanly
+
+---
+
+## 📦 Repo Source
+
+Pulled from:
+
+* `ctoppan/bitburner`
+
+Local changes will be overwritten unless committed upstream.
+
+---
+
+## 🧭 Recommended Play Loop
+
+```text
+Start fresh
+→ run start.js
+→ growth mode
+→ scale servers
+→ switch to save_for_augs
+→ buy augments
+→ install
+→ repeat
+```
+
+---
+
+## 💡 Pro Tips
+
+* Big fleets need multi-target scaling (future upgrade)
+* Don’t over-stack augments (price multiplier explodes)
+* Always switch to cash mode before buying
+
+---
+
+## ✅ Summary
+
+This stack now gives you:
+
+* 🔁 self-tuning hacking engine
+* 🧠 dynamic investment logic
+* 💰 manual control over spending vs saving
+* 🚫 safer execution (no freezes)
+* ⚡ fast scaling to late-game
+
+---
+
+Enjoy the climb 🚀
