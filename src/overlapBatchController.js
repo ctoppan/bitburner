@@ -3,71 +3,261 @@ export async function main(ns) {
     ns.disableLog("ALL");
     try { ns.ui.openTail(); } catch {}
 
-    const [hackPctArg, spacerArg, homeReserveArg, maxBatchesArg] = ns.args;
+    const [argHackPct, argSpacer, argHomeReserveGb, argMaxBatches] = parseArgs(ns.args);
 
     const state = {
-        hackPct: Math.min(Math.max(Number(hackPctArg || 0.02), 0.01), 0.2),
-        spacer: Math.min(Math.max(Number(spacerArg || 250), 25), 400),
-        homeReserve: Number(homeReserveArg || 128),
-        maxBatches: Math.min(Math.max(Number(maxBatchesArg || 64), 16), 512),
-        maxJobs: 6000
+        hackPct: clamp(argHackPct, 0.01, 0.15),
+        spacer: clampInt(argSpacer, 40, 500),
+        homeReserveGb: Math.max(0, Number(argHomeReserveGb)),
+        maxBatches: clampInt(argMaxBatches, 16, 512),
+        maxJobs: 6000,
+        tuneNote: "init",
+        invest: "balanced",
+        mode: "MULTI",
+        lastTuneAt: 0,
+        lastTarget: null,
+        lastTargetScore: 0,
+        lastTargetSwitchAt: 0,
     };
 
+    const TUNE_INTERVAL = 15000;
+    const LOOP_SLEEP = 900;
+    const TARGET_HOLD_MS = 300000;
+    const TARGET_SWITCH_MULTIPLIER = 1.35;
+    const MAX_LAUNCHES_PER_LOOP = 12;
+    const MIN_BATCH_FREE_RAM = 64;
+    const TUNER_KEY = "bb_tuner_state_v3";
+
     while (true) {
-        const servers = getServers(ns);
-        const target = pickTarget(ns);
+        try {
+            const rooted = getRootedServers(ns);
+            const workers = rooted.filter(s => ns.getServerMaxRam(s) > 0);
+            const fleet = getFleetRam(ns, workers, state.homeReserveGb);
 
-        const active = countBatches(ns, servers);
+            const rankedTargets = rankTargets(ns, fleet);
+            const activeTargetPool = chooseActiveTargets(rankedTargets, fleet);
+            const selected = selectPrimaryTarget(ns, state, fleet, activeTargetPool, TARGET_HOLD_MS, TARGET_SWITCH_MULTIPLIER);
+            const primaryTarget = selected.target;
+            const primaryScore = selected.score;
+            const primaryInfo = getTargetInfo(ns, primaryTarget);
 
-        if (active < state.maxBatches) {
-            await launchBatch(ns, servers, target, state);
+            const activeJobs = countActiveBatchJobs(ns, rooted);
+            const activeBatches = countActiveBatches(ns, rooted).total;
+
+            if (shouldTune(state.lastTuneAt, TUNE_INTERVAL)) {
+                tuneState(state, fleet, activeJobs, activeBatches, primaryInfo);
+                state.lastTuneAt = Date.now();
+            }
+
+            publishTunerState(TUNER_KEY, {
+                ts: Date.now(),
+                invest: state.invest,
+                tuneNote: state.tuneNote,
+                target: primaryTarget,
+                targetScore: primaryScore,
+                fleetFreeRam: fleet.free,
+                fleetTotalRam: fleet.total,
+                ramFreeRatio: fleet.total > 0 ? fleet.free / fleet.total : 0,
+                activeJobs,
+                maxJobs: state.maxJobs,
+                activeBatches,
+                maxBatches: state.maxBatches,
+                hackPct: state.hackPct,
+                spacer: state.spacer,
+                activeTargets: activeTargetPool.map(t => t.target),
+            });
+
+            if (state.lastTarget !== primaryTarget) {
+                ns.print(`[overlapBatchController.js] Target selected: ${primaryTarget}`);
+                state.lastTarget = primaryTarget;
+                state.lastTargetScore = primaryScore;
+                state.lastTargetSwitchAt = Date.now();
+            }
+
+            let launchedThisLoop = 0;
+            let lastAction = "idle";
+
+            while (
+                launchedThisLoop < MAX_LAUNCHES_PER_LOOP &&
+                canLaunchMore(state, activeJobs + launchedThisLoop * 4, activeBatches + launchedThisLoop, fleet) &&
+                getFleetRam(ns, workers, state.homeReserveGb).free >= MIN_BATCH_FREE_RAM
+            ) {
+                const primaryInfoNow = getTargetInfo(ns, primaryTarget);
+
+                if (needsPrep(primaryInfoNow)) {
+                    const prepOk = tryLaunchPrep(ns, workers, primaryTarget, state, primaryInfoNow);
+                    if (!prepOk) break;
+                    lastAction = `prep:${primaryTarget}`;
+                    launchedThisLoop++;
+                    continue;
+                }
+
+                const launchTarget = pickLaunchTarget(ns, activeTargetPool);
+                if (!launchTarget) break;
+
+                const targetInfo = getTargetInfo(ns, launchTarget.target);
+                const batchOk = tryLaunchBatch(ns, workers, launchTarget.target, state, targetInfo);
+                if (!batchOk) break;
+
+                lastAction = `batch:${launchTarget.target}`;
+                launchedThisLoop++;
+            }
+
+            const liveFleet = getFleetRam(ns, workers, state.homeReserveGb);
+            const liveActiveJobs = countActiveBatchJobs(ns, rooted);
+            const liveActiveBatches = countActiveBatches(ns, rooted).total;
+            const livePrimaryInfo = getTargetInfo(ns, primaryTarget);
+
+            renderTail(ns, buildSummary(
+                ns,
+                state,
+                liveFleet,
+                primaryTarget,
+                primaryScore,
+                livePrimaryInfo,
+                liveActiveJobs,
+                liveActiveBatches,
+                activeTargetPool,
+                rankedTargets.slice(0, 6),
+                lastAction,
+                launchedThisLoop
+            ));
+
+            await ns.sleep(LOOP_SLEEP);
+        } catch (err) {
+            ns.print(`ERROR: ${String(err)}`);
+            await ns.sleep(3000);
         }
-
-        ns.clearLog();
-        ns.print(`Target: ${target}`);
-        ns.print(`Batches: ${active}/${state.maxBatches}`);
-
-        await ns.sleep(1000);
     }
 }
 
-async function launchBatch(ns, servers, target, state) {
-    const batchId = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-
-    const weakenTime = ns.getWeakenTime(target);
-    const growTime = ns.getGrowTime(target);
-    const hackTime = ns.getHackTime(target);
-
-    const spacer = state.spacer;
-
-    const w1Delay = 0;
-    const gDelay = weakenTime - growTime + spacer;
-    const hDelay = weakenTime - hackTime + spacer * 2;
-    const w2Delay = spacer * 3;
-
-    const jobs = [
-        { script: "batchWeaken.js", threads: 1, delay: w1Delay, tag: "W1" },
-        { script: "batchGrow.js", threads: 2, delay: gDelay, tag: "G" },
-        { script: "batchHack.js", threads: 1, delay: hDelay, tag: "H" },
-        { script: "batchWeaken.js", threads: 1, delay: w2Delay, tag: "W2" }
+function parseArgs(args) {
+    return [
+        Number(args[0] ?? 0.02),
+        Number(args[1] ?? 200),
+        Number(args[2] ?? 128),
+        Number(args[3] ?? 64),
     ];
+}
 
+function clamp(v, min, max) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return min;
+    return Math.min(Math.max(n, min), max);
+}
+
+function clampInt(v, min, max) {
+    return Math.trunc(clamp(v, min, max));
+}
+
+function shouldTune(lastTuneAt, interval) {
+    return Date.now() - lastTuneAt >= interval;
+}
+
+function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
+    const ramFreeRatio = fleet.total > 0 ? fleet.free / fleet.total : 0;
+    const jobPressure = state.maxJobs > 0 ? activeJobs / state.maxJobs : 1;
+    const batchPressure = state.maxBatches > 0 ? activeBatches / state.maxBatches : 1;
+
+    if (ramFreeRatio > 0.90) {
+        state.hackPct = clamp(state.hackPct * 1.20, 0.02, 0.15);
+        state.spacer = clampInt(Math.floor(state.spacer * 0.90), 40, 500);
+        state.maxBatches = clampInt(state.maxBatches + 32, 16, 512);
+        state.maxJobs = clampInt(state.maxJobs + 400, 800, 12000);
+        state.invest = "buy_servers";
+        state.mode = "MULTI";
+        state.tuneNote = `ramp_hard free:${pct(ramFreeRatio)}`;
+        return;
+    }
+
+    if (ramFreeRatio > 0.70) {
+        state.hackPct = clamp(state.hackPct * 1.10, 0.02, 0.12);
+        state.spacer = clampInt(Math.floor(state.spacer * 0.94), 50, 500);
+        state.maxBatches = clampInt(state.maxBatches + 16, 16, 512);
+        state.maxJobs = clampInt(state.maxJobs + 250, 800, 12000);
+        state.invest = "buy_servers";
+        state.mode = "MULTI";
+        state.tuneNote = `ramp_up free:${pct(ramFreeRatio)}`;
+        return;
+    }
+
+    if (ramFreeRatio < 0.10) {
+        state.hackPct = clamp(state.hackPct * 0.88, 0.01, 0.10);
+        state.spacer = clampInt(Math.floor(state.spacer * 1.12), 60, 700);
+        state.maxBatches = clampInt(state.maxBatches - 8, 8, 512);
+        state.maxJobs = clampInt(state.maxJobs - 250, 800, 12000);
+        state.invest = "save_home";
+        state.tuneNote = `backoff_ram_limited free:${pct(ramFreeRatio)}`;
+        return;
+    }
+
+    if (jobPressure > 0.95 && ramFreeRatio > 0.25) {
+        state.maxJobs = clampInt(state.maxJobs + 300, 800, 12000);
+        state.tuneNote = `raise_jobs jobs:${pct(jobPressure)}`;
+        return;
+    }
+
+    if (batchPressure > 0.95 && ramFreeRatio > 0.25) {
+        state.maxBatches = clampInt(state.maxBatches + 12, 8, 512);
+        state.tuneNote = `raise_batch_cap batches:${pct(batchPressure)}`;
+        return;
+    }
+
+    if (needsPrep(targetInfo)) {
+        state.hackPct = clamp(state.hackPct * 0.95, 0.01, 0.12);
+        state.invest = ramFreeRatio > 0.35 ? "buy_servers" : "balanced";
+        state.tuneNote = `prep_or_recovery money:${pct(targetInfo.moneyRatio)} sec+${targetInfo.secAboveMin.toFixed(2)}`;
+        return;
+    }
+
+    state.invest = ramFreeRatio > 0.30 ? "buy_servers" : "balanced";
+    state.tuneNote = `stable free:${pct(ramFreeRatio)} jobs:${pct(jobPressure)} batches:${pct(batchPressure)}`;
+}
+
+function canLaunchMore(state, activeJobs, activeBatches, fleet) {
+    if (fleet.free < 64) return false;
+    if (activeJobs >= state.maxJobs) return false;
+    if (activeBatches >= state.maxBatches) return false;
+    return true;
+}
+
+function needsPrep(targetInfo) {
+    return targetInfo.moneyRatio < 0.75 || targetInfo.secAboveMin > 2.0;
+}
+
+function tryLaunchPrep(ns, workers, target, state, targetInfo) {
+    const secAboveMin = targetInfo.secAboveMin;
+    const moneyRatio = targetInfo.moneyRatio;
+
+    let weakenThreads = 0;
+    let growThreads = 0;
+
+    if (secAboveMin > 0.25) {
+        weakenThreads = Math.max(1, Math.ceil(secAboveMin / 0.05));
+    }
+
+    if (moneyRatio < 0.98) {
+        const growMultiplier = Math.max(1.05, 1 / Math.max(0.01, moneyRatio));
+        growThreads = Math.max(20, Math.ceil(ns.growthAnalyze(target, growMultiplier) || 20));
+    }
+
+    if (growThreads > 0) {
+        weakenThreads += Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
+    }
+
+    if (weakenThreads <= 0 && growThreads <= 0) return false;
+
+    const launchId = `prep-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     const launched = [];
 
-    for (const job of jobs) {
-        const ok = execDistributed(
-            ns,
-            servers,
-            job.script,
-            job.threads,
-            [target, job.delay, `${batchId}-${job.tag}`],
-            launched
-        );
+    const jobs = [];
+    if (weakenThreads > 0) jobs.push({ script: "batchWeaken.js", threads: weakenThreads, args: [target, 0, `${launchId}-PW`] });
+    if (growThreads > 0) jobs.push({ script: "batchGrow.js", threads: growThreads, args: [target, 150, `${launchId}-PG`] });
 
+    for (const job of jobs) {
+        const ok = launchDistributed(ns, workers, job.script, job.threads, job.args, state.homeReserveGb, launched);
         if (!ok) {
-            for (const entry of launched) {
-                ns.kill(entry.pid, entry.host);
-            }
+            cleanupLaunched(ns, launched);
             return false;
         }
     }
@@ -75,22 +265,90 @@ async function launchBatch(ns, servers, target, state) {
     return true;
 }
 
-function execDistributed(ns, servers, script, threads, args, launched) {
+function tryLaunchBatch(ns, workers, target, state, targetInfo) {
+    const batchId = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    let hackFraction = clamp(state.hackPct, 0.01, 0.15);
+
+    const pctPerHackThread = ns.hackAnalyze(target);
+    if (!Number.isFinite(pctPerHackThread) || pctPerHackThread <= 0) return false;
+
+    let hackThreads = Math.max(1, Math.floor(hackFraction / pctPerHackThread));
+    if (!Number.isFinite(hackThreads) || hackThreads < 1) hackThreads = 1;
+
+    const stolenFraction = Math.min(0.90, hackThreads * pctPerHackThread);
+    const postHackMoney = Math.max(0.01, 1 - stolenFraction);
+    let growThreads = Math.max(1, Math.ceil(ns.growthAnalyze(target, 1 / postHackMoney) || 1));
+    let weakenHackThreads = Math.max(1, Math.ceil((hackThreads * 0.002) / 0.05));
+    let weakenGrowThreads = Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
+
+    const batchRam =
+        hackThreads * ns.getScriptRam("batchHack.js", "home") +
+        growThreads * ns.getScriptRam("batchGrow.js", "home") +
+        (weakenHackThreads + weakenGrowThreads) * ns.getScriptRam("batchWeaken.js", "home");
+
+    const fleet = getFleetRam(ns, workers, state.homeReserveGb);
+
+    if (fleet.free > 2048 && batchRam > 0) {
+        const ramBudget = Math.min(fleet.free * 0.08, fleet.free / Math.max(1, state.maxBatches / 4));
+        const scale = clamp(ramBudget / batchRam, 1, 12);
+
+        hackThreads = Math.max(1, Math.floor(hackThreads * scale));
+        growThreads = Math.max(1, Math.ceil(growThreads * scale));
+        weakenHackThreads = Math.max(1, Math.ceil((hackThreads * 0.002) / 0.05));
+        weakenGrowThreads = Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
+    }
+
+    const weakenTime = ns.getWeakenTime(target);
+    const growTime = ns.getGrowTime(target);
+    const hackTime = ns.getHackTime(target);
+    const spacer = state.spacer;
+
+    const w1Delay = 0;
+    const gDelay = Math.max(0, weakenTime - growTime + spacer);
+    const hDelay = Math.max(0, weakenTime - hackTime + spacer * 2);
+    const w2Delay = spacer * 3;
+
+    const jobs = [
+        { script: "batchWeaken.js", threads: weakenHackThreads, args: [target, w1Delay, `${batchId}-W1`] },
+        { script: "batchGrow.js", threads: growThreads, args: [target, gDelay, `${batchId}-G`] },
+        { script: "batchHack.js", threads: hackThreads, args: [target, hDelay, `${batchId}-H`] },
+        { script: "batchWeaken.js", threads: weakenGrowThreads, args: [target, w2Delay, `${batchId}-W2`] },
+    ];
+
+    const launched = [];
+    for (const job of jobs) {
+        const ok = launchDistributed(ns, workers, job.script, job.threads, job.args, state.homeReserveGb, launched);
+        if (!ok) {
+            cleanupLaunched(ns, launched);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function launchDistributed(ns, workers, script, threads, args, homeReserveGb, launched = []) {
     let remaining = threads;
+    const ramPerThread = ns.getScriptRam(script, "home");
+    if (ramPerThread <= 0) return false;
 
-    for (const host of servers) {
-        const ramPerThread = ns.getScriptRam(script, host);
-        if (ramPerThread <= 0) continue;
+    const ordered = [...workers].sort(
+        (a, b) => getServerFreeRam(ns, b, homeReserveGb) - getServerFreeRam(ns, a, homeReserveGb)
+    );
 
-        const free = getFreeRam(ns, host);
-        const possible = Math.floor(free / ramPerThread);
-        if (possible <= 0) continue;
+    for (const host of ordered) {
+        const free = getServerFreeRam(ns, host, homeReserveGb);
+        const maxThreads = Math.floor(free / ramPerThread);
+        if (maxThreads <= 0) continue;
 
-        const use = Math.min(possible, remaining);
+        const use = Math.min(maxThreads, remaining);
+        if (use <= 0) continue;
+
+        if (host !== "home") ns.scp(script, host, "home");
+
         const pid = ns.exec(script, host, use, ...args);
-
         if (pid !== 0) {
-            launched.push({ pid, host });
+            launched.push({ host, pid });
             remaining -= use;
         }
 
@@ -100,70 +358,247 @@ function execDistributed(ns, servers, script, threads, args, launched) {
     return false;
 }
 
-function countBatches(ns, servers) {
+function cleanupLaunched(ns, launched) {
+    for (const entry of launched) {
+        try { ns.kill(entry.pid, entry.host); } catch {}
+    }
+}
+
+function getRootedServers(ns) {
+    const discovered = new Set(["home"]);
+    const queue = ["home"];
+
+    while (queue.length > 0) {
+        const host = queue.shift();
+        for (const next of ns.scan(host)) {
+            if (!discovered.has(next)) {
+                discovered.add(next);
+                queue.push(next);
+            }
+        }
+    }
+
+    return [...discovered].filter(s => ns.hasRootAccess(s));
+}
+
+function getFleetRam(ns, servers, homeReserveGb) {
+    let total = 0;
+    let used = 0;
+
+    for (const s of servers) {
+        let max = ns.getServerMaxRam(s);
+        let use = ns.getServerUsedRam(s);
+
+        if (s === "home") {
+            max = Math.max(0, max - homeReserveGb);
+            use = Math.min(use, max);
+        }
+
+        total += max;
+        used += use;
+    }
+
+    return {
+        total,
+        used,
+        free: Math.max(0, total - used),
+    };
+}
+
+function getServerFreeRam(ns, host, homeReserveGb = 0) {
+    let max = ns.getServerMaxRam(host);
+    const used = ns.getServerUsedRam(host);
+
+    if (host === "home") {
+        max = Math.max(0, max - homeReserveGb);
+    }
+
+    return Math.max(0, max - used);
+}
+
+function chooseActiveTargets(rankedTargets, fleet) {
+    if (!rankedTargets.length) return [];
+
+    const best = rankedTargets[0];
+    if (!best) return [];
+
+    const pool = [best];
+
+    for (let i = 1; i < rankedTargets.length && pool.length < 3; i++) {
+        const candidate = rankedTargets[i];
+        if (candidate.score >= best.score * 0.75) {
+            pool.push(candidate);
+        }
+    }
+
+    return pool;
+}
+
+function pickLaunchTarget(ns, activeTargetPool) {
+    if (!activeTargetPool.length) return null;
+
+    const totalScore = activeTargetPool.reduce((sum, t) => sum + Math.max(0.0001, t.score), 0);
+    let roll = Math.random() * totalScore;
+
+    for (const entry of activeTargetPool) {
+        roll -= Math.max(0.0001, entry.score);
+        if (roll <= 0) return entry;
+    }
+
+    return activeTargetPool[0];
+}
+
+function selectPrimaryTarget(ns, state, fleet, activeTargetPool, holdMs, switchMultiplier) {
+    if (!activeTargetPool.length) {
+        return { target: "n00dles", score: 0 };
+    }
+
+    const best = activeTargetPool[0];
+    if (!state.lastTarget) return best;
+
+    const currentScore = scoreSingleTarget(ns, state.lastTarget, fleet);
+    const enoughTimePassed = (Date.now() - state.lastTargetSwitchAt) > holdMs;
+    const meaningfullyBetter = best.score > (currentScore * switchMultiplier);
+
+    if (!enoughTimePassed && !meaningfullyBetter) {
+        return { target: state.lastTarget, score: currentScore };
+    }
+
+    return best;
+}
+
+function rankTargets(ns, fleet) {
+    const servers = getRootedServers(ns)
+        .filter(s => ns.getServerMaxMoney(s) > 0)
+        .filter(s => ns.getServerRequiredHackingLevel(s) <= ns.getHackingLevel())
+        .filter(s => s !== "home");
+
+    if (!servers.length) return [{ target: "n00dles", score: 0 }];
+
+    const ranked = [];
+    for (const s of servers) {
+        ranked.push({ target: s, score: scoreSingleTarget(ns, s, fleet) });
+    }
+
+    ranked.sort((a, b) => b.score - a.score);
+    return ranked;
+}
+
+function scoreSingleTarget(ns, server, fleet) {
+    const maxMoney = Math.max(1, ns.getServerMaxMoney(server));
+    const moneyAvail = Math.max(0, ns.getServerMoneyAvailable(server));
+    const moneyRatio = maxMoney > 0 ? moneyAvail / maxMoney : 0;
+
+    const minSec = Math.max(1, ns.getServerMinSecurityLevel(server));
+    const curSec = Math.max(minSec, ns.getServerSecurityLevel(server));
+    const secPenalty = Math.max(1, curSec / minSec);
+
+    const chance = Math.max(0.01, ns.hackAnalyzeChance(server));
+    const weakenTime = Math.max(1, ns.getWeakenTime(server));
+    const prepPenalty = needsPrep({
+        moneyRatio,
+        secAboveMin: Math.max(0, curSec - minSec),
+    }) ? 0.35 : 1.0;
+
+    return (Math.sqrt(maxMoney) * chance * (0.25 + moneyRatio * 0.75) * prepPenalty) / weakenTime / secPenalty;
+}
+
+function getTargetInfo(ns, target) {
+    const money = ns.getServerMoneyAvailable(target);
+    const moneyMax = ns.getServerMaxMoney(target);
+    const sec = ns.getServerSecurityLevel(target);
+    const secMin = ns.getServerMinSecurityLevel(target);
+
+    return {
+        money,
+        moneyMax,
+        sec,
+        secMin,
+        moneyRatio: moneyMax > 0 ? money / moneyMax : 0,
+        secAboveMin: Math.max(0, sec - secMin),
+    };
+}
+
+function countActiveBatchJobs(ns, servers) {
+    let total = 0;
+    const names = new Set(["batchHack.js", "batchGrow.js", "batchWeaken.js"]);
+
+    for (const s of servers) {
+        for (const proc of ns.ps(s)) {
+            if (names.has(proc.filename)) total++;
+        }
+    }
+
+    return total;
+}
+
+function countActiveBatches(ns, servers) {
     const ids = new Set();
 
-    for (const host of servers) {
-        for (const proc of ns.ps(host)) {
-            if (![
-                "batchHack.js",
-                "batchGrow.js",
-                "batchWeaken.js"
-            ].includes(proc.filename)) {
-                continue;
-            }
-
-            if (!proc.args || proc.args.length < 3) continue;
-            const id = proc.args[2];
-            if (typeof id !== "string") continue;
+    for (const s of servers) {
+        for (const proc of ns.ps(s)) {
+            if (!["batchHack.js", "batchGrow.js", "batchWeaken.js"].includes(proc.filename)) continue;
+            const args = proc.args || [];
+            const id = typeof args[2] === "string" ? args[2] : null;
+            if (!id) continue;
 
             const baseId = id.split("-").slice(0, -1).join("-");
             if (baseId) ids.add(baseId);
         }
     }
 
-    return ids.size;
+    return { total: ids.size };
 }
 
-function getServers(ns) {
-    const seen = new Set(["home"]);
-    const queue = ["home"];
-
-    while (queue.length) {
-        const host = queue.shift();
-        for (const next of ns.scan(host)) {
-            if (!seen.has(next)) {
-                seen.add(next);
-                queue.push(next);
-            }
+function publishTunerState(key, payload) {
+    try {
+        if (typeof localStorage !== "undefined") {
+            localStorage.setItem(key, JSON.stringify(payload));
         }
+    } catch {}
+}
+
+function buildSummary(ns, state, fleet, target, targetScore, targetInfo, activeJobs, activeBatches, activeTargets, rankedTargets, lastAction, launchedThisLoop) {
+    const lines = [
+        `Mode: ${state.mode} x${launchedThisLoop} avail:${Math.floor(fleet.free)} fleet:${Math.floor(fleet.total)} time:${new Date().getSeconds()}`,
+        `jobs:${activeJobs}/${state.maxJobs} batches:${activeBatches}/${state.maxBatches}`,
+        `Tune: dynamic hpct:${(state.hackPct * 100).toFixed(2)} spacer:${state.spacer} maxB:${state.maxBatches}`,
+        `Invest: ${state.invest}`,
+        `Tune note: ${state.tuneNote}`,
+        `Action: ${lastAction}`,
+        `Fleet RAM: ${ns.formatRam(fleet.free)} free / ${ns.formatRam(fleet.total)} total`,
+        `Target: ${target} score:${formatScore(targetScore)} ${needsPrep(targetInfo) ? "[prep]" : "[batch]"}`,
+        `Money: ${ns.formatNumber(targetInfo.money)} / ${ns.formatNumber(targetInfo.moneyMax)} (${pct(targetInfo.moneyRatio)})`,
+        `Security: ${targetInfo.sec.toFixed(2)} / ${targetInfo.secMin.toFixed(2)} (+${targetInfo.secAboveMin.toFixed(2)})`,
+        `Active targets:`,
+    ];
+
+    for (const row of activeTargets) {
+        lines.push(`  ${row.target.padEnd(18, " ")} ${formatScore(row.score)}`);
     }
 
-    return [...seen].filter(host => ns.hasRootAccess(host) && ns.getServerMaxRam(host) > 0);
+    lines.push(`Top targets:`);
+    for (const row of rankedTargets) {
+        lines.push(`  ${row.target.padEnd(18, " ")} ${formatScore(row.score)}`);
+    }
+
+    return lines;
 }
 
-function getFreeRam(ns, host) {
-    return Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
+function renderTail(ns, lines) {
+    ns.clearLog();
+    for (const line of lines) ns.print(line);
 }
 
-function pickTarget(ns) {
-    const servers = getServers(ns)
-        .filter(host => host !== "home")
-        .filter(host => ns.getServerMaxMoney(host) > 0)
-        .filter(host => ns.getServerRequiredHackingLevel(host) <= ns.getHackingLevel());
-
-    if (servers.length === 0) return "n00dles";
-
-    servers.sort((a, b) => scoreTarget(ns, b) - scoreTarget(ns, a));
-    return servers[0];
+function pct(v) {
+    return `${(v * 100).toFixed(0)}%`;
 }
 
-function scoreTarget(ns, host) {
-    const maxMoney = Math.max(1, ns.getServerMaxMoney(host));
-    const chance = Math.max(0.01, ns.hackAnalyzeChance(host));
-    const weakenTime = Math.max(1, ns.getWeakenTime(host));
-    const moneyRatio = maxMoney > 0 ? ns.getServerMoneyAvailable(host) / maxMoney : 0;
-    const secPenalty = Math.max(1, ns.getServerSecurityLevel(host) / Math.max(1, ns.getServerMinSecurityLevel(host)));
-
-    return (maxMoney * chance * (0.5 + moneyRatio * 0.5)) / weakenTime / secPenalty;
+function formatScore(v) {
+    if (!Number.isFinite(v)) return "0";
+    if (v >= 1e12) return `${(v / 1e12).toFixed(2)}t`;
+    if (v >= 1e9) return `${(v / 1e9).toFixed(2)}b`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(2)}m`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(2)}k`;
+    return v.toFixed(2);
 }
