@@ -2,6 +2,15 @@
 export async function main(ns) {
     ns.disableLog("ALL");
 
+    // Modes:
+    // "growth"         = spend aggressively on purchased servers
+    // "balanced"       = moderate spending
+    // "save_for_augs"  = preserve a large cash reserve for augment purchases
+    const SPEND_MODE = "balanced";
+
+    // Only used in save_for_augs mode
+    const AUG_RESERVE = 75e9;
+
     const TUNER_KEY = "bb_tuner_state_v1";
     const LOOP_MS = 5000;
     const HEARTBEAT_MS = 2 * 60 * 1000;
@@ -23,7 +32,7 @@ export async function main(ns) {
         utilBucket: null,
     };
 
-    ns.print("Starting playerServers.js");
+    ns.print(`Starting playerServers.js mode=${SPEND_MODE}`);
 
     while (true) {
         try {
@@ -40,8 +49,16 @@ export async function main(ns) {
             const controllerHackPct = Number.isFinite(tuner?.hackPct) ? tuner.hackPct : null;
             const controllerSpacer = Number.isFinite(tuner?.spacer) ? tuner.spacer : null;
 
-            const policy = resolveSpendPolicy(controllerPolicy, fleetUsedRatio);
-            const reserve = computeReserve({ policy, money, ramCost, coreCost });
+            const policy = resolveSpendPolicy(SPEND_MODE, controllerPolicy, fleetUsedRatio);
+
+            const reserve = computeReserve({
+                policy,
+                money,
+                ramCost,
+                coreCost,
+                augReserve: AUG_RESERVE,
+            });
+
             const budget = Math.max(0, money - reserve);
 
             const purchasedServers = ns.getPurchasedServers();
@@ -80,6 +97,7 @@ export async function main(ns) {
                 homeTarget,
                 policy,
                 controllerPolicy,
+                spendMode: SPEND_MODE,
                 tuneNote,
                 affordRam,
                 affordCore,
@@ -101,11 +119,23 @@ export async function main(ns) {
     }
 }
 
-function resolveSpendPolicy(controllerPolicy, fleetUsedRatio) {
+function resolveSpendPolicy(spendMode, controllerPolicy, fleetUsedRatio) {
+    if (spendMode === "growth") {
+        if (fleetUsedRatio != null) {
+            if (fleetUsedRatio < 0.20) return "turbo_buy_servers";
+            if (fleetUsedRatio < 0.60) return "buy_servers";
+            return "balanced";
+        }
+        return "buy_servers";
+    }
+
+    if (spendMode === "save_for_augs") {
+        return "save_for_augs";
+    }
+
     if (fleetUsedRatio != null) {
-        if (fleetUsedRatio < 0.20) return "turbo_buy_servers";
-        if (fleetUsedRatio < 0.50) return "buy_servers";
-        if (fleetUsedRatio < 0.75) return "balanced";
+        if (fleetUsedRatio < 0.20) return "buy_servers";
+        if (fleetUsedRatio < 0.50) return "balanced";
         return "save_home";
     }
 
@@ -124,6 +154,7 @@ function maybeLog(ns, ctx) {
         homeTarget,
         policy,
         controllerPolicy,
+        spendMode,
         tuneNote,
         affordRam,
         affordCore,
@@ -164,7 +195,7 @@ function maybeLog(ns, ctx) {
     const spacerText = controllerSpacer == null ? "n/a" : `${controllerSpacer}`;
 
     ns.print(
-        `home target=${homeTarget}, ` +
+        `mode=${spendMode}, home target=${homeTarget}, ` +
         `ramCost=${fmtMoney(ns, ramCost)}, coreCost=${fmtMoney(ns, coreCost)}, ` +
         `reserve=${fmtMoney(ns, reserve)}, budget=${fmtMoney(ns, budget)}, money=${fmtMoney(ns, money)}, ` +
         `policy=${policy}, controller=${controllerPolicy}, used=${fleetUsedText}, freeRam=${ramFreeText}, ` +
@@ -216,7 +247,7 @@ function readTunerState(key) {
     }
 }
 
-function computeReserve({ policy, money, ramCost, coreCost }) {
+function computeReserve({ policy, money, ramCost, coreCost, augReserve }) {
     const cheaperHomeUpgrade = Math.min(ramCost, coreCost);
 
     if (policy === "turbo_buy_servers") {
@@ -227,8 +258,16 @@ function computeReserve({ policy, money, ramCost, coreCost }) {
         return Math.max(5e9, Math.min(cheaperHomeUpgrade * 0.20, money * 0.10));
     }
 
+    if (policy === "balanced") {
+        return Math.max(7.5e9, Math.min(cheaperHomeUpgrade * 0.50, money * 0.40));
+    }
+
     if (policy === "save_home") {
         return Math.max(10e9, Math.min(cheaperHomeUpgrade * 1.00, money * 0.85));
+    }
+
+    if (policy === "save_for_augs") {
+        return Math.max(augReserve, Math.min(cheaperHomeUpgrade * 0.50, money * 0.95));
     }
 
     return Math.max(7.5e9, Math.min(cheaperHomeUpgrade * 0.50, money * 0.40));
@@ -244,12 +283,14 @@ function decideTargetPurchasedRam({ ns, policy, budget, money, ramFreeRatio, fle
     if (policy === "turbo_buy_servers") spendRatio = 0.90;
     else if (policy === "buy_servers") spendRatio = 0.70;
     else if (policy === "balanced") spendRatio = 0.40;
-    else spendRatio = 0.15;
+    else if (policy === "save_home") spendRatio = 0.15;
+    else if (policy === "save_for_augs") spendRatio = 0.05;
+    else spendRatio = 0.25;
 
-    if (ramFreeRatio != null && ramFreeRatio > 0.80) spendRatio *= 1.15;
-    if (fleetUsedRatio != null && fleetUsedRatio < 0.20) spendRatio *= 1.20;
+    if (ramFreeRatio != null && ramFreeRatio > 0.80 && policy !== "save_for_augs") spendRatio *= 1.15;
+    if (fleetUsedRatio != null && fleetUsedRatio < 0.20 && policy === "turbo_buy_servers") spendRatio *= 1.20;
 
-    let spendCap = Math.max(0, Math.min(budget, money * spendRatio));
+    const spendCap = Math.max(0, Math.min(budget, money * spendRatio));
     if (spendCap <= 0) return 0;
 
     let target = base;
