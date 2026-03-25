@@ -8,9 +8,6 @@ export async function main(ns) {
         return;
     }
 
-    if (delay > 0) {
-        await ns.sleep(delay);
-    }
-
+    if (delay > 0) await ns.sleep(delay);
     await ns.weaken(target);
 }
