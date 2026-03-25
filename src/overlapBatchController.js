@@ -9,8 +9,8 @@ export async function main(ns) {
         hackPct: clamp(argHackPct, 0.01, 0.15),
         spacer: clampInt(argSpacer, 40, 500),
         homeReserveGb: Math.max(0, Number(argHomeReserveGb)),
-        maxBatches: clampInt(argMaxBatches, 16, 512),
-        maxJobs: 12000,
+        maxBatches: clampInt(argMaxBatches, 64, 2000),
+        maxJobs: 18000,
         tuneNote: "init",
         invest: "balanced",
         mode: "MULTI",
@@ -25,8 +25,9 @@ export async function main(ns) {
     const TARGET_HOLD_MS = 300000;
     const TARGET_SWITCH_MULTIPLIER = 1.35;
     const MAX_LAUNCHES_PER_LOOP = 12;
+    const MAX_PREP_LAUNCHES_PER_LOOP = 3;
     const MIN_BATCH_FREE_RAM = 64;
-    const TUNER_KEY = "bb_tuner_state_v4";
+    const TUNER_KEY = "bb_tuner_state_v5";
 
     while (true) {
         try {
@@ -75,20 +76,30 @@ export async function main(ns) {
             }
 
             let launchedThisLoop = 0;
+            let prepLaunchedThisLoop = 0;
             let lastAction = "idle";
 
             while (
                 launchedThisLoop < MAX_LAUNCHES_PER_LOOP &&
-                canLaunchMore(state, activeJobs + launchedThisLoop * 4, activeBatches + launchedThisLoop, fleet) &&
+                canLaunchMore(
+                    state,
+                    activeJobs + launchedThisLoop * 4,
+                    activeBatches + launchedThisLoop,
+                    getFleetRam(ns, workers, state.homeReserveGb)
+                ) &&
                 getFleetRam(ns, workers, state.homeReserveGb).free >= MIN_BATCH_FREE_RAM
             ) {
                 const primaryInfoNow = getTargetInfo(ns, primaryTarget);
 
                 if (needsPrep(primaryInfoNow)) {
+                    if (prepLaunchedThisLoop >= MAX_PREP_LAUNCHES_PER_LOOP) break;
+
                     const prepOk = tryLaunchPrep(ns, workers, primaryTarget, state, primaryInfoNow);
                     if (!prepOk) break;
+
                     lastAction = `prep:${primaryTarget}`;
                     launchedThisLoop++;
+                    prepLaunchedThisLoop++;
                     continue;
                 }
 
@@ -136,7 +147,7 @@ function parseArgs(args) {
         Number(args[0] ?? 0.03),
         Number(args[1] ?? 150),
         Number(args[2] ?? 128),
-        Number(args[3] ?? 96),
+        Number(args[3] ?? 256),
     ];
 }
 
@@ -162,8 +173,8 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     if (ramFreeRatio > 0.90) {
         state.hackPct = clamp(state.hackPct * 1.20, 0.03, 0.15);
         state.spacer = clampInt(Math.floor(state.spacer * 0.90), 40, 500);
-        state.maxBatches = clampInt(state.maxBatches + 32, 16, 512);
-        state.maxJobs = clampInt(state.maxJobs + 400, 1200, 20000);
+        state.maxBatches = clampInt(state.maxBatches + 32, 64, 2000);
+        state.maxJobs = clampInt(state.maxJobs + 500, 1200, 30000);
         state.invest = "buy_servers";
         state.mode = "MULTI";
         state.tuneNote = `ramp_hard free:${pct(ramFreeRatio)}`;
@@ -173,8 +184,8 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     if (ramFreeRatio > 0.70) {
         state.hackPct = clamp(state.hackPct * 1.10, 0.03, 0.12);
         state.spacer = clampInt(Math.floor(state.spacer * 0.94), 40, 500);
-        state.maxBatches = clampInt(state.maxBatches + 16, 16, 512);
-        state.maxJobs = clampInt(state.maxJobs + 250, 1200, 20000);
+        state.maxBatches = clampInt(state.maxBatches + 16, 64, 2000);
+        state.maxJobs = clampInt(state.maxJobs + 250, 1200, 30000);
         state.invest = "buy_servers";
         state.mode = "MULTI";
         state.tuneNote = `ramp_up free:${pct(ramFreeRatio)}`;
@@ -184,21 +195,21 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     if (ramFreeRatio < 0.10) {
         state.hackPct = clamp(state.hackPct * 0.88, 0.01, 0.10);
         state.spacer = clampInt(Math.floor(state.spacer * 1.12), 60, 700);
-        state.maxBatches = clampInt(state.maxBatches - 8, 8, 512);
-        state.maxJobs = clampInt(state.maxJobs - 250, 1200, 20000);
+        state.maxBatches = clampInt(state.maxBatches - 16, 64, 2000);
+        state.maxJobs = clampInt(state.maxJobs - 500, 1200, 30000);
         state.invest = "save_home";
         state.tuneNote = `backoff_ram_limited free:${pct(ramFreeRatio)}`;
         return;
     }
 
     if (jobPressure > 0.95 && ramFreeRatio > 0.25) {
-        state.maxJobs = clampInt(state.maxJobs + 300, 1200, 20000);
+        state.maxJobs = clampInt(state.maxJobs + 500, 1200, 30000);
         state.tuneNote = `raise_jobs jobs:${pct(jobPressure)}`;
         return;
     }
 
     if (batchPressure > 0.95 && ramFreeRatio > 0.25) {
-        state.maxBatches = clampInt(state.maxBatches + 12, 8, 512);
+        state.maxBatches = clampInt(state.maxBatches + 32, 64, 2000);
         state.tuneNote = `raise_batch_cap batches:${pct(batchPressure)}`;
         return;
     }
@@ -251,8 +262,20 @@ function tryLaunchPrep(ns, workers, target, state, targetInfo) {
     const launched = [];
 
     const jobs = [];
-    if (weakenThreads > 0) jobs.push({ script: "batchWeaken.js", threads: weakenThreads, args: [target, 0, `${launchId}-PW`] });
-    if (growThreads > 0) jobs.push({ script: "batchGrow.js", threads: growThreads, args: [target, 150, `${launchId}-PG`] });
+    if (weakenThreads > 0) {
+        jobs.push({
+            script: "batchWeaken.js",
+            threads: weakenThreads,
+            args: [target, 0, `${launchId}-PW`]
+        });
+    }
+    if (growThreads > 0) {
+        jobs.push({
+            script: "batchGrow.js",
+            threads: growThreads,
+            args: [target, 150, `${launchId}-PG`]
+        });
+    }
 
     for (const job of jobs) {
         const ok = launchDistributed(ns, workers, job.script, job.threads, job.args, state.homeReserveGb, launched);
@@ -267,16 +290,13 @@ function tryLaunchPrep(ns, workers, target, state, targetInfo) {
 
 function tryLaunchBatch(ns, workers, target, state, targetInfo) {
     const batchId = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-    let hackFraction = clamp(state.hackPct, 0.01, 0.15);
-
     const pctPerHackThread = ns.hackAnalyze(target);
     if (!Number.isFinite(pctPerHackThread) || pctPerHackThread <= 0) return false;
 
-    let hackThreads = Math.max(1, Math.floor(hackFraction / pctPerHackThread));
-    if (!Number.isFinite(hackThreads) || hackThreads < 1) hackThreads = 1;
-
+    let hackThreads = Math.max(1, Math.floor(clamp(state.hackPct, 0.01, 0.15) / pctPerHackThread));
     const stolenFraction = Math.min(0.90, hackThreads * pctPerHackThread);
     const postHackMoney = Math.max(0.01, 1 - stolenFraction);
+
     let growThreads = Math.max(1, Math.ceil(ns.growthAnalyze(target, 1 / postHackMoney) || 1));
     let weakenHackThreads = Math.max(1, Math.ceil((hackThreads * 0.002) / 0.05));
     let weakenGrowThreads = Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
@@ -543,21 +563,40 @@ function countActiveBatchJobs(ns, servers) {
 }
 
 function countActiveBatches(ns, servers) {
-    const ids = new Set();
+    const batchParts = new Map();
 
     for (const s of servers) {
         for (const proc of ns.ps(s)) {
             if (!["batchHack.js", "batchGrow.js", "batchWeaken.js"].includes(proc.filename)) continue;
+
             const args = proc.args || [];
             const id = typeof args[2] === "string" ? args[2] : null;
             if (!id) continue;
 
-            const baseId = id.split("-").slice(0, -1).join("-");
-            if (baseId) ids.add(baseId);
+            if (id.startsWith("prep-")) continue;
+
+            const pieces = id.split("-");
+            const suffix = pieces[pieces.length - 1];
+            const baseId = pieces.slice(0, -1).join("-");
+
+            if (!baseId) continue;
+
+            if (!batchParts.has(baseId)) {
+                batchParts.set(baseId, new Set());
+            }
+
+            batchParts.get(baseId).add(suffix);
         }
     }
 
-    return { total: ids.size };
+    let total = 0;
+    for (const parts of batchParts.values()) {
+        if (parts.has("W1") && parts.has("G") && parts.has("H") && parts.has("W2")) {
+            total++;
+        }
+    }
+
+    return { total };
 }
 
 function publishTunerState(key, payload) {
