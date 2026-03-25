@@ -9,7 +9,7 @@ export async function main(ns) {
 
     const MODE_KEY = "bb_spend_mode_v1";
     const AUG_RESERVE_KEY = "bb_aug_reserve_v1";
-    const TUNER_KEY = "bb_tuner_state_v1";
+    const TUNER_KEY = "bb_tuner_state_v8";
     const LOOP_MS = 5000;
     const HEARTBEAT_MS = 2 * 60 * 1000;
     const MONEY_BUCKET_SIZE = 10e9;
