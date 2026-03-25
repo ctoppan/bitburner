@@ -40,11 +40,11 @@ export async function main(ns) {
             const fleet = getFleetRam(ns, workers, effectiveHomeReserveGb);
             state.fastStart = isFastStart(ns, fleet);
 
-            autoScaleCaps(ns, state, fleet);
+            autoScaleCaps(state, fleet);
 
-            const rankedTargets = rankTargets(ns, fleet);
+            const rankedTargets = rankTargets(ns);
             const activeTargetPool = chooseActiveTargets(rankedTargets);
-            const selected = selectPrimaryTarget(ns, state, fleet, activeTargetPool, TARGET_HOLD_MS, TARGET_SWITCH_MULTIPLIER);
+            const selected = selectPrimaryTarget(ns, state, activeTargetPool, TARGET_HOLD_MS, TARGET_SWITCH_MULTIPLIER);
             const primaryTarget = selected.target;
             const primaryScore = selected.score;
             const primaryInfo = getTargetInfo(ns, primaryTarget);
@@ -55,7 +55,6 @@ export async function main(ns) {
             if (shouldTune(state.lastTuneAt, TUNE_INTERVAL)) {
                 tuneState(state, fleet, activeJobs, activeBatches, primaryInfo);
 
-                // no-idle kick
                 if ((fleet.total > 0 ? fleet.free / fleet.total : 0) > 0.60 && activeJobs === 0) {
                     state.hackPct = clamp(state.hackPct, 0.03, 0.12);
                     state.spacer = clampInt(Math.min(state.spacer, 25), 15, 400);
@@ -165,7 +164,7 @@ function parseArgs(args) {
     return [
         Number(args[0] ?? 0.05),
         Number(args[1] ?? 25),
-        args.length >= 3 ? Number(args[2]) : Number.NaN,
+        args.length >= 2 ? Number(args[2]) : Number.NaN,
         Number(args[3] ?? 1024),
     ];
 }
@@ -184,7 +183,7 @@ function shouldTune(lastTuneAt, interval) {
     return Date.now() - lastTuneAt >= interval;
 }
 
-function autoScaleCaps(ns, state, fleet) {
+function autoScaleCaps(state, fleet) {
     const totalTb = fleet.total / 1024;
     const freeRatio = fleet.total > 0 ? fleet.free / fleet.total : 0;
     const fastStart = state.fastStart;
@@ -320,31 +319,23 @@ function tryLaunchPrep(ns, workers, target, state, targetInfo) {
     const launchId = `prep-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     const launched = [];
 
-    const jobs = [];
+    let launchedAny = false;
+
     if (weakenThreads > 0) {
-        jobs.push({
-            script: "batchWeaken.js",
-            threads: weakenThreads,
-            args: [target, 0, `${launchId}-PW`]
-        });
+        const ok = launchDistributed(
+            ns, workers, "batchWeaken.js", weakenThreads, [target, 0, `${launchId}-PW`], state.effectiveHomeReserveGb, launched
+        );
+        launchedAny = launchedAny || ok;
     }
+
     if (growThreads > 0) {
-        jobs.push({
-            script: "batchGrow.js",
-            threads: growThreads,
-            args: [target, 120, `${launchId}-PG`]
-        });
+        const ok = launchDistributed(
+            ns, workers, "batchGrow.js", growThreads, [target, 120, `${launchId}-PG`], state.effectiveHomeReserveGb, launched
+        );
+        launchedAny = launchedAny || ok;
     }
 
-    for (const job of jobs) {
-        const ok = launchDistributed(ns, workers, job.script, job.threads, job.args, state.effectiveHomeReserveGb, launched);
-        if (!ok) {
-            cleanupLaunched(ns, launched);
-            return false;
-        }
-    }
-
-    return true;
+    return launchedAny;
 }
 
 function tryLaunchBatch(ns, workers, target, state, targetInfo, fleetSnapshot) {
@@ -390,28 +381,22 @@ function tryLaunchBatch(ns, workers, target, state, targetInfo, fleetSnapshot) {
     const hackTime = ns.getHackTime(target);
     const spacer = state.spacer;
 
-    const w1Delay = 0;
-    const gDelay = Math.max(0, weakenTime - growTime + spacer);
-    const hDelay = Math.max(0, weakenTime - hackTime + spacer * 2);
-    const w2Delay = spacer * 3;
-
     const jobs = [
-        { script: "batchWeaken.js", threads: weakenHackThreads, args: [target, w1Delay, `${batchId}-W1`] },
-        { script: "batchGrow.js", threads: growThreads, args: [target, gDelay, `${batchId}-G`] },
-        { script: "batchHack.js", threads: hackThreads, args: [target, hDelay, `${batchId}-H`] },
-        { script: "batchWeaken.js", threads: weakenGrowThreads, args: [target, w2Delay, `${batchId}-W2`] },
+        { script: "batchWeaken.js", threads: weakenHackThreads, args: [target, 0, `${batchId}-W1`] },
+        { script: "batchGrow.js", threads: growThreads, args: [target, Math.max(0, weakenTime - growTime + spacer), `${batchId}-G`] },
+        { script: "batchHack.js", threads: hackThreads, args: [target, Math.max(0, weakenTime - hackTime + spacer * 2), `${batchId}-H`] },
+        { script: "batchWeaken.js", threads: weakenGrowThreads, args: [target, spacer * 3, `${batchId}-W2`] },
     ];
 
-    const launched = [];
+    let launchedAny = false;
     for (const job of jobs) {
-        const ok = launchDistributed(ns, workers, job.script, job.threads, job.args, state.effectiveHomeReserveGb, launched);
-        if (!ok) {
-            cleanupLaunched(ns, launched);
-            return false;
-        }
+        const ok = launchDistributed(
+            ns, workers, job.script, job.threads, job.args, state.effectiveHomeReserveGb
+        );
+        launchedAny = launchedAny || ok;
     }
 
-    return true;
+    return launchedAny;
 }
 
 function launchDistributed(ns, workers, script, threads, args, homeReserveGb, launched = []) {
@@ -437,18 +422,20 @@ function launchDistributed(ns, workers, script, threads, args, homeReserveGb, la
         if (pid !== 0) {
             launched.push({ host, pid });
             remaining -= use;
+        } else {
+            ns.print(`LAUNCH FAIL script=${script} host=${host} threads=${use} free=${ns.formatRam(free)}`);
         }
 
         if (remaining <= 0) return true;
     }
 
-    return false;
-}
-
-function cleanupLaunched(ns, launched) {
-    for (const entry of launched) {
-        try { ns.kill(entry.pid, entry.host); } catch {}
+    if (remaining >= threads) {
+        ns.print(`DISTRIBUTE FAIL script=${script} needThreads=${threads} left=${remaining}`);
+        return false;
     }
+
+    ns.print(`PARTIAL OK script=${script} requested=${threads} launched=${threads - remaining}`);
+    return true;
 }
 
 function getRootedServers(ns) {
@@ -564,7 +551,7 @@ function pickLaunchTarget(activeTargetPool) {
     return activeTargetPool[0];
 }
 
-function selectPrimaryTarget(ns, state, fleet, activeTargetPool, holdMs, switchMultiplier) {
+function selectPrimaryTarget(ns, state, activeTargetPool, holdMs, switchMultiplier) {
     if (!activeTargetPool.length) {
         return { target: "n00dles", score: 0 };
     }
@@ -572,7 +559,7 @@ function selectPrimaryTarget(ns, state, fleet, activeTargetPool, holdMs, switchM
     const best = activeTargetPool[0];
     if (!state.lastTarget) return best;
 
-    const currentScore = scoreSingleTarget(ns, state.lastTarget, fleet);
+    const currentScore = scoreSingleTarget(ns, state.lastTarget);
     const enoughTimePassed = (Date.now() - state.lastTargetSwitchAt) > holdMs;
     const meaningfullyBetter = best.score > (currentScore * switchMultiplier);
 
@@ -583,7 +570,7 @@ function selectPrimaryTarget(ns, state, fleet, activeTargetPool, holdMs, switchM
     return best;
 }
 
-function rankTargets(ns, fleet) {
+function rankTargets(ns) {
     const playerHack = ns.getHackingLevel();
 
     const servers = getRootedServers(ns)
@@ -606,14 +593,14 @@ function rankTargets(ns, fleet) {
 
     const ranked = [];
     for (const s of servers) {
-        ranked.push({ target: s, score: scoreSingleTarget(ns, s, fleet) });
+        ranked.push({ target: s, score: scoreSingleTarget(ns, s) });
     }
 
     ranked.sort((a, b) => b.score - a.score);
     return ranked;
 }
 
-function scoreSingleTarget(ns, server, fleet) {
+function scoreSingleTarget(ns, server) {
     const maxMoney = ns.getServerMaxMoney(server);
     if (maxMoney <= 0) return 0;
 
