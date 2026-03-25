@@ -24,9 +24,9 @@ export async function main(ns) {
 
     const TUNE_INTERVAL = 3000;
     const LOOP_SLEEP = 500;
-    const TARGET_HOLD_MS = 90000;
-    const TARGET_SWITCH_MULTIPLIER = 1.18;
-    const MAX_PREP_LAUNCHES_PER_LOOP = 12;
+    const TARGET_HOLD_MS = 60000;
+    const TARGET_SWITCH_MULTIPLIER = 1.12;
+    const MAX_PREP_LAUNCHES_PER_LOOP = 8;
     const TUNER_KEY = "bb_tuner_state_v8";
 
     while (true) {
@@ -34,10 +34,9 @@ export async function main(ns) {
             const rooted = getRootedServers(ns);
             const workers = rooted.filter(s => ns.getServerMaxRam(s) > 0);
 
-            const effectiveHomeReserveGb = resolveHomeReserveGb(ns, state.homeReserveGb);
-            state.effectiveHomeReserveGb = effectiveHomeReserveGb;
+            state.effectiveHomeReserveGb = resolveHomeReserveGb(ns, state.homeReserveGb);
 
-            const fleet = getFleetRam(ns, workers, effectiveHomeReserveGb);
+            const fleet = getFleetRam(ns, workers, state.effectiveHomeReserveGb);
             state.fastStart = isFastStart(ns, fleet);
 
             autoScaleCaps(state, fleet);
@@ -111,7 +110,7 @@ export async function main(ns) {
                 if (needsPrep(primaryInfoNow)) {
                     if (prepLaunchedThisLoop >= MAX_PREP_LAUNCHES_PER_LOOP) break;
 
-                    const prepOk = tryLaunchPrep(ns, workers, primaryTarget, state, primaryInfoNow);
+                    const prepOk = tryLaunchPrep(ns, workers, primaryTarget, state, primaryInfoNow, fleet);
                     if (!prepOk) break;
 
                     lastAction = `prep:${primaryTarget}`;
@@ -164,7 +163,7 @@ function parseArgs(args) {
     return [
         Number(args[0] ?? 0.05),
         Number(args[1] ?? 25),
-        args.length >= 2 ? Number(args[2]) : Number.NaN,
+        args.length >= 3 ? Number(args[2]) : Number.NaN,
         Number(args[3] ?? 1024),
     ];
 }
@@ -294,9 +293,10 @@ function needsPrep(targetInfo) {
     return targetInfo.moneyRatio < 0.92 || targetInfo.secAboveMin > 1.5;
 }
 
-function tryLaunchPrep(ns, workers, target, state, targetInfo) {
+function tryLaunchPrep(ns, workers, target, state, targetInfo, fleetSnapshot) {
     const secAboveMin = targetInfo.secAboveMin;
     const moneyRatio = targetInfo.moneyRatio;
+    const fleet = fleetSnapshot || getFleetRam(ns, workers, state.effectiveHomeReserveGb);
 
     let weakenThreads = 0;
     let growThreads = 0;
@@ -314,11 +314,22 @@ function tryLaunchPrep(ns, workers, target, state, targetInfo) {
         weakenThreads += Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
     }
 
+    // cap prep so one server does not consume the whole fleet
+    const prepRamCap = Math.max(16, fleet.total * 0.12);
+    const ramWeak = ns.getScriptRam("batchWeaken.js", "home");
+    const ramGrow = ns.getScriptRam("batchGrow.js", "home");
+    const estimatedRam = weakenThreads * ramWeak + growThreads * ramGrow;
+
+    if (estimatedRam > prepRamCap && estimatedRam > 0) {
+        const scale = prepRamCap / estimatedRam;
+        weakenThreads = Math.max(1, Math.floor(weakenThreads * scale));
+        growThreads = Math.max(1, Math.floor(growThreads * scale));
+    }
+
     if (weakenThreads <= 0 && growThreads <= 0) return false;
 
     const launchId = `prep-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     const launched = [];
-
     let launchedAny = false;
 
     if (weakenThreads > 0) {
@@ -364,11 +375,11 @@ function tryLaunchBatch(ns, workers, target, state, targetInfo, fleetSnapshot) {
 
     if (fleet.free > 128 && batchRam > 0) {
         const ramBudget = Math.min(
-            fleet.free * (state.fastStart ? 0.40 : 0.25),
-            fleet.free / Math.max(1, state.maxBatches / (state.fastStart ? 6 : 10))
+            fleet.free * (state.fastStart ? 0.35 : 0.22),
+            fleet.free / Math.max(1, state.maxBatches / (state.fastStart ? 8 : 12))
         );
 
-        const scale = clamp(ramBudget / batchRam, 1, state.fastStart ? 128 : 64);
+        const scale = clamp(ramBudget / batchRam, 1, state.fastStart ? 96 : 48);
 
         hackThreads = Math.max(1, Math.floor(hackThreads * scale));
         growThreads = Math.max(1, Math.ceil(growThreads * scale));
@@ -422,20 +433,12 @@ function launchDistributed(ns, workers, script, threads, args, homeReserveGb, la
         if (pid !== 0) {
             launched.push({ host, pid });
             remaining -= use;
-        } else {
-            ns.print(`LAUNCH FAIL script=${script} host=${host} threads=${use} free=${ns.formatRam(free)}`);
         }
 
         if (remaining <= 0) return true;
     }
 
-    if (remaining >= threads) {
-        ns.print(`DISTRIBUTE FAIL script=${script} needThreads=${threads} left=${remaining}`);
-        return false;
-    }
-
-    ns.print(`PARTIAL OK script=${script} requested=${threads} launched=${threads - remaining}`);
-    return true;
+    return remaining < threads;
 }
 
 function getRootedServers(ns) {
@@ -529,7 +532,7 @@ function chooseActiveTargets(rankedTargets) {
 
     for (let i = 1; i < rankedTargets.length && pool.length < 4; i++) {
         const candidate = rankedTargets[i];
-        if (candidate.score >= best.score * 0.70) {
+        if (candidate.score >= best.score * 0.75) {
             pool.push(candidate);
         }
     }
@@ -582,9 +585,10 @@ function rankTargets(ns) {
 
             if (playerHack >= 3000) return maxMoney >= 1e11;
             if (playerHack >= 1000) return maxMoney >= 1e9;
-            if (playerHack >= 500) return maxMoney >= 1e8;
-            if (playerHack >= 250) return maxMoney >= 5e7;
-            if (playerHack >= 100) return maxMoney >= 5e6;
+            if (playerHack >= 500) return maxMoney >= 2e8;
+            if (playerHack >= 250) return maxMoney >= 1e8;
+            if (playerHack >= 150) return maxMoney >= 2e7;
+            if (playerHack >= 100) return maxMoney >= 1e7;
 
             return true;
         });
@@ -614,10 +618,11 @@ function scoreSingleTarget(ns, server) {
     const chance = Math.max(0.01, ns.hackAnalyzeChance(server));
     const weakenTime = Math.max(1, ns.getWeakenTime(server));
 
-    const value = Math.pow(maxMoney, 0.92);
-    const prepPenalty = (moneyRatio < 0.92 || (curSec - minSec) > 1.5) ? 0.78 : 1.0;
+    // stronger reward for bigger money servers, less bias toward tiny quick servers
+    const value = Math.pow(maxMoney, 1.08);
+    const prepPenalty = (moneyRatio < 0.92 || (curSec - minSec) > 1.5) ? 0.72 : 1.0;
 
-    return (value * chance * prepPenalty) / weakenTime / secPenalty;
+    return (value * chance * prepPenalty) / (Math.pow(weakenTime, 0.85) * secPenalty);
 }
 
 function getTargetInfo(ns, target) {
