@@ -1,4 +1,10 @@
-const baseUrl = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src/";
+const REPO_OWNER = "ctoppan";
+const REPO_NAME = "bitburner";
+const REPO_REF = "master";
+const REPO_SRC_DIR = "src/";
+
+const baseUrl = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_REF}/${REPO_SRC_DIR}`;
+const treeApiUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/git/trees/${REPO_REF}?recursive=1`;
 
 // Toggle which hacking system to run
 const USE_OVERLAP_BATCH = true;
@@ -15,6 +21,8 @@ const PREFER_HOME_RAM = true;
 const CORE_COST_VS_RAM_COST_THRESHOLD = 0.6;
 const HOME_RESERVE_BUFFER = 1.1;
 
+const REPO_TREE_CACHE_FILE = "/Temp/initHacking.repoTree.json";
+
 function stockApiUnlocked(ns) {
   try {
     return !!(ns.stock && ns.stock.hasTIXAPIAccess && ns.stock.hasTIXAPIAccess());
@@ -23,35 +31,93 @@ function stockApiUnlocked(ns) {
   }
 }
 
-function getFilesToDownload(ns) {
-  const files = [
-    "common.js",
-    "spider.js",
-    "find.js",
+function getFallbackFiles() {
+  return [
     "backdoorHelper.js",
-    "mainHack.js",
+    "batchController.js",
+    "batchGrow.js",
+    "batchHack.js",
+    "batchWeaken.js",
+    "browserAutoHack.js",
+    "commitCrime.js",
+    "common.js",
+    "contracter.js",
+    "factionChecklist.js",
+    "find.js",
+    "fleetfree.js",
+    "gangFastAscender.js",
+    "gangManager.js",
+    "getCrimesData.js",
+    "getCrimesData2.js",
     "grow.js",
     "hack.js",
-    "weaken.js",
-    "runHacking.js",
+    "hackingMission.js",
+    "karmaReducer.js",
     "killAll.js",
-    "playerServers.js",
-    "prepTarget.js",
-    "batchHack.js",
-    "batchGrow.js",
-    "batchWeaken.js",
-    "batchController.js",
+    "mainHack.js",
     "overlapBatchController.js",
-    "stopXpGrind.js",
-    "fleetfree.js",
+    "playerServers.js",
+    "prepareGang.js",
+    "prepTarget.js",
+    "progressionManager.js",
+    "runHacking.js",
+    "sellAllStock.js",
     "setSpendMode.js",
+    "share-home.js",
+    "share-manager.js",
+    "share-worker.js",
+    "spider.js",
+    "start.js",
+    "stockMarketer.js",
+    "stockMarketer4S.js",
+    "stockTrader.js",
+    "stopXpGrind.js",
+    "weaken.js",
+    "xpDistributor.js",
+    "xpGrind.js",
   ];
+}
 
-  if (stockApiUnlocked(ns)) {
-    files.push("stockTrader.js");
+async function getFilesToDownload(ns) {
+  try {
+    if (ns.fileExists(REPO_TREE_CACHE_FILE, "home")) {
+      ns.rm(REPO_TREE_CACHE_FILE, "home");
+    }
+
+    const ok = await ns.wget(`${treeApiUrl}&ts=${Date.now()}`, REPO_TREE_CACHE_FILE);
+
+    if (!ok || !ns.fileExists(REPO_TREE_CACHE_FILE, "home")) {
+      throw new Error("repo tree download failed");
+    }
+
+    const raw = ns.read(REPO_TREE_CACHE_FILE);
+    const parsed = JSON.parse(raw);
+    const files = (parsed.tree || [])
+      .filter((entry) => entry && entry.type === "blob")
+      .map((entry) => entry.path)
+      .filter((path) => typeof path === "string")
+      .filter((path) => path.startsWith(REPO_SRC_DIR) && path.endsWith(".js"))
+      .map((path) => path.slice(REPO_SRC_DIR.length))
+      .filter((path) => path && path !== "initHacking.js")
+      .sort((a, b) => a.localeCompare(b));
+
+    if (!files.length) {
+      throw new Error("repo tree returned zero script files");
+    }
+
+    return files;
+  } catch (error) {
+    ns.tprint(
+      `[WARN ${localeHHMMSS()}] Falling back to built-in file list: ${String(error)}`
+    );
+    return getFallbackFiles();
+  } finally {
+    try {
+      if (ns.fileExists(REPO_TREE_CACHE_FILE, "home")) {
+        ns.rm(REPO_TREE_CACHE_FILE, "home");
+      }
+    } catch {}
   }
-
-  return files;
 }
 
 function getHomeUpgradeTarget() {
@@ -81,10 +147,10 @@ export async function main(ns) {
   }
 
   const stockEnabled = stockApiUnlocked(ns);
-  const filesToDownload = getFilesToDownload(ns);
+  const filesToDownload = await getFilesToDownload(ns);
 
   ns.tprint(
-    `[${localeHHMMSS()}] Stock API ${stockEnabled ? "detected, including stockTrader.js" : "not unlocked, skipping stockTrader.js"}`
+    `[${localeHHMMSS()}] Refreshing ${filesToDownload.length} repo scripts${stockEnabled ? " (stock API detected)" : ""}`
   );
 
   for (const filename of filesToDownload) {
