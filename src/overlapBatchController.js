@@ -6,13 +6,13 @@ export async function main(ns) {
     const [argHackPct, argSpacer, argHomeReserveGb, argMaxBatches] = parseArgs(ns.args);
 
     const state = {
-        hackPct: clamp(argHackPct, 0.02, 0.30),
-        spacer: clampInt(argSpacer, 25, 400),
+        hackPct: clamp(argHackPct, 0.03, 0.30),
+        spacer: clampInt(argSpacer, 15, 400),
         homeReserveGb: Number.isFinite(argHomeReserveGb) ? Number(argHomeReserveGb) : -1,
         effectiveHomeReserveGb: 0,
         fastStart: true,
-        maxBatches: Math.max(512, Math.trunc(Number(argMaxBatches) || 0)),
-        maxJobs: 12000,
+        maxBatches: Math.max(1024, Math.trunc(Number(argMaxBatches) || 0)),
+        maxJobs: 16000,
         tuneNote: "init",
         invest: "balanced",
         mode: "MULTI",
@@ -22,11 +22,11 @@ export async function main(ns) {
         lastTargetSwitchAt: 0,
     };
 
-    const TUNE_INTERVAL = 4000;
-    const LOOP_SLEEP = 700;
-    const TARGET_HOLD_MS = 180000;
-    const TARGET_SWITCH_MULTIPLIER = 1.25;
-    const MAX_PREP_LAUNCHES_PER_LOOP = 4;
+    const TUNE_INTERVAL = 3000;
+    const LOOP_SLEEP = 500;
+    const TARGET_HOLD_MS = 90000;
+    const TARGET_SWITCH_MULTIPLIER = 1.18;
+    const MAX_PREP_LAUNCHES_PER_LOOP = 12;
     const TUNER_KEY = "bb_tuner_state_v8";
 
     while (true) {
@@ -54,6 +54,14 @@ export async function main(ns) {
 
             if (shouldTune(state.lastTuneAt, TUNE_INTERVAL)) {
                 tuneState(state, fleet, activeJobs, activeBatches, primaryInfo);
+
+                // no-idle kick
+                if ((fleet.total > 0 ? fleet.free / fleet.total : 0) > 0.60 && activeJobs === 0) {
+                    state.hackPct = clamp(state.hackPct, 0.03, 0.12);
+                    state.spacer = clampInt(Math.min(state.spacer, 25), 15, 400);
+                    state.tuneNote = `kickstart free:${pct(fleet.free / Math.max(1, fleet.total))}`;
+                }
+
                 state.lastTuneAt = Date.now();
             }
 
@@ -148,17 +156,17 @@ export async function main(ns) {
             await ns.sleep(LOOP_SLEEP);
         } catch (err) {
             ns.print(`ERROR: ${String(err)}`);
-            await ns.sleep(3000);
+            await ns.sleep(2000);
         }
     }
 }
 
 function parseArgs(args) {
     return [
-        Number(args[0] ?? 0.03),
-        Number(args[1] ?? 150),
+        Number(args[0] ?? 0.05),
+        Number(args[1] ?? 25),
         args.length >= 3 ? Number(args[2]) : Number.NaN,
-        Number(args[3] ?? 0),
+        Number(args[3] ?? 1024),
     ];
 }
 
@@ -179,15 +187,15 @@ function shouldTune(lastTuneAt, interval) {
 function autoScaleCaps(ns, state, fleet) {
     const totalTb = fleet.total / 1024;
     const freeRatio = fleet.total > 0 ? fleet.free / fleet.total : 0;
+    const fastStart = state.fastStart;
 
-    const fastStart = isFastStart(ns, fleet);
-    const targetMaxBatches = clampInt(Math.floor(totalTb * (fastStart ? 160 : 80)), fastStart ? 1024 : 512, 40000);
-    const targetMaxJobs = clampInt(Math.floor(totalTb * (fastStart ? 520 : 260)), fastStart ? 12000 : 6000, 150000);
+    const targetMaxBatches = clampInt(Math.floor(totalTb * (fastStart ? 220 : 110)), fastStart ? 1024 : 512, 50000);
+    const targetMaxJobs = clampInt(Math.floor(totalTb * (fastStart ? 850 : 360)), fastStart ? 16000 : 8000, 200000);
 
     if (state.maxBatches < targetMaxBatches) {
         state.maxBatches = Math.min(
             targetMaxBatches,
-            state.maxBatches + Math.max(fastStart ? 512 : 256, Math.floor(targetMaxBatches * (fastStart ? 0.30 : 0.18)))
+            state.maxBatches + Math.max(fastStart ? 768 : 256, Math.floor(targetMaxBatches * (fastStart ? 0.35 : 0.15)))
         );
     } else if (freeRatio < 0.05 && state.maxBatches > 512) {
         state.maxBatches = Math.max(512, state.maxBatches - Math.max(128, Math.floor(state.maxBatches * 0.03)));
@@ -196,10 +204,10 @@ function autoScaleCaps(ns, state, fleet) {
     if (state.maxJobs < targetMaxJobs) {
         state.maxJobs = Math.min(
             targetMaxJobs,
-            state.maxJobs + Math.max(fastStart ? 2500 : 1000, Math.floor(targetMaxJobs * (fastStart ? 0.22 : 0.12)))
+            state.maxJobs + Math.max(fastStart ? 3200 : 1200, Math.floor(targetMaxJobs * (fastStart ? 0.25 : 0.12)))
         );
-    } else if (freeRatio < 0.05 && state.maxJobs > 6000) {
-        state.maxJobs = Math.max(6000, state.maxJobs - Math.max(500, Math.floor(state.maxJobs * 0.03)));
+    } else if (freeRatio < 0.05 && state.maxJobs > 8000) {
+        state.maxJobs = Math.max(8000, state.maxJobs - Math.max(600, Math.floor(state.maxJobs * 0.03)));
     }
 }
 
@@ -207,17 +215,15 @@ function getLaunchPressure(fleet, fastStart = false) {
     const totalTb = fleet.total / 1024;
     const freeRatio = fleet.total > 0 ? fleet.free / fleet.total : 0;
 
-    let launches = fastStart ? 18 : 8;
-    if (totalTb > 32) launches = fastStart ? 24 : 16;
-    if (totalTb > 256) launches = fastStart ? 32 : 24;
-    if (totalTb > 1024) launches = fastStart ? 40 : 32;
-    if (totalTb > 4096) launches = 48;
-    if (totalTb > 16384) launches = 64;
-    if (totalTb > 65536) launches = 96;
+    let launches = fastStart ? 40 : 8;
+    if (totalTb > 1) launches = fastStart ? 56 : 16;
+    if (totalTb > 4) launches = fastStart ? 72 : 24;
+    if (totalTb > 16) launches = fastStart ? 96 : 32;
+    if (totalTb > 64) launches = fastStart ? 128 : 48;
 
-    if (freeRatio < 0.10) launches = Math.max(fastStart ? 8 : 6, Math.floor(launches * 0.4));
-    else if (freeRatio < 0.20) launches = Math.max(fastStart ? 12 : 8, Math.floor(launches * 0.6));
-    else if (fastStart && freeRatio > 0.75) launches = Math.max(launches, 28);
+    if (freeRatio < 0.10) launches = Math.max(fastStart ? 12 : 6, Math.floor(launches * 0.35));
+    else if (freeRatio < 0.20) launches = Math.max(fastStart ? 20 : 8, Math.floor(launches * 0.55));
+    else if (fastStart && freeRatio > 0.70) launches = Math.max(launches, 64);
 
     return launches;
 }
@@ -229,26 +235,17 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     const fastStart = state.fastStart;
 
     if (fastStart && ramFreeRatio > 0.85) {
-        state.hackPct = clamp(state.hackPct * 1.25, 0.05, 0.35);
+        state.hackPct = clamp(state.hackPct * 1.20, 0.05, 0.35);
         state.spacer = clampInt(Math.floor(state.spacer * 0.82), 15, 250);
         state.invest = "turbo_buy_servers";
         state.mode = "FAST_START";
-        state.tuneNote = `fast_start push free:${pct(ramFreeRatio)}`;
+        state.tuneNote = `fast_push free:${pct(ramFreeRatio)}`;
         return;
     }
 
-    if (ramFreeRatio > 0.92) {
-        state.hackPct = clamp(state.hackPct * 1.18, 0.04, 0.30);
-        state.spacer = clampInt(Math.floor(state.spacer * 0.88), 25, 400);
-        state.invest = fastStart ? "turbo_buy_servers" : "buy_servers";
-        state.mode = fastStart ? "FAST_START" : "MULTI";
-        state.tuneNote = `ramp_hard free:${pct(ramFreeRatio)}`;
-        return;
-    }
-
-    if (ramFreeRatio > 0.75) {
-        state.hackPct = clamp(state.hackPct * 1.10, 0.03, 0.25);
-        state.spacer = clampInt(Math.floor(state.spacer * 0.94), 30, 400);
+    if (ramFreeRatio > 0.70) {
+        state.hackPct = clamp(state.hackPct * 1.10, 0.04, 0.30);
+        state.spacer = clampInt(Math.floor(state.spacer * 0.90), 20, 350);
         state.invest = fastStart ? "turbo_buy_servers" : "buy_servers";
         state.mode = fastStart ? "FAST_START" : "MULTI";
         state.tuneNote = `ramp_up free:${pct(ramFreeRatio)}`;
@@ -257,14 +254,14 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
 
     if (ramFreeRatio < 0.12) {
         state.hackPct = clamp(state.hackPct * 0.90, 0.01, 0.18);
-        state.spacer = clampInt(Math.floor(state.spacer * 1.08), 35, 700);
+        state.spacer = clampInt(Math.floor(state.spacer * 1.08), 30, 700);
         state.invest = "save_home";
-        state.tuneNote = `backoff_ram_limited free:${pct(ramFreeRatio)}`;
+        state.tuneNote = `backoff free:${pct(ramFreeRatio)}`;
         return;
     }
 
     if (jobPressure > 0.95 && ramFreeRatio > 0.20) {
-        state.spacer = clampInt(state.spacer + 5, 25, 700);
+        state.spacer = clampInt(state.spacer + 5, 20, 700);
         state.tuneNote = `job_limited jobs:${pct(jobPressure)}`;
         return;
     }
@@ -276,15 +273,15 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     }
 
     if (needsPrep(targetInfo)) {
-        state.hackPct = clamp(state.hackPct * 0.97, 0.01, 0.18);
+        state.hackPct = clamp(state.hackPct * 0.98, 0.01, 0.20);
         state.invest = ramFreeRatio > 0.35
             ? (fastStart ? "turbo_buy_servers" : "buy_servers")
             : "balanced";
-        state.tuneNote = `prep_or_recovery money:${pct(targetInfo.moneyRatio)} sec+${targetInfo.secAboveMin.toFixed(2)}`;
+        state.tuneNote = `prep money:${pct(targetInfo.moneyRatio)} sec+${targetInfo.secAboveMin.toFixed(2)}`;
         return;
     }
 
-    state.tuneNote = `stable free:${pct(ramFreeRatio)} jobs:${pct(jobPressure)} batches:${pct(batchPressure)}`;
+    state.tuneNote = `stable free:${pct(ramFreeRatio)}`;
 }
 
 function canLaunchMore(state, activeJobs, activeBatches, fleet) {
@@ -295,7 +292,7 @@ function canLaunchMore(state, activeJobs, activeBatches, fleet) {
 }
 
 function needsPrep(targetInfo) {
-    return targetInfo.moneyRatio < 0.75 || targetInfo.secAboveMin > 2.0;
+    return targetInfo.moneyRatio < 0.92 || targetInfo.secAboveMin > 1.5;
 }
 
 function tryLaunchPrep(ns, workers, target, state, targetInfo) {
@@ -305,13 +302,13 @@ function tryLaunchPrep(ns, workers, target, state, targetInfo) {
     let weakenThreads = 0;
     let growThreads = 0;
 
-    if (secAboveMin > 0.25) {
+    if (secAboveMin > 0.15) {
         weakenThreads = Math.max(1, Math.ceil(secAboveMin / 0.05));
     }
 
-    if (moneyRatio < 0.98) {
-        const growMultiplier = Math.max(1.05, 1 / Math.max(0.01, moneyRatio));
-        growThreads = Math.max(20, Math.ceil(ns.growthAnalyze(target, growMultiplier) || 20));
+    if (moneyRatio < 0.995) {
+        const growMultiplier = Math.max(1.03, 1 / Math.max(0.01, moneyRatio));
+        growThreads = Math.max(12, Math.ceil(ns.growthAnalyze(target, growMultiplier) || 12));
     }
 
     if (growThreads > 0) {
@@ -335,7 +332,7 @@ function tryLaunchPrep(ns, workers, target, state, targetInfo) {
         jobs.push({
             script: "batchGrow.js",
             threads: growThreads,
-            args: [target, 150, `${launchId}-PG`]
+            args: [target, 120, `${launchId}-PG`]
         });
     }
 
@@ -374,13 +371,13 @@ function tryLaunchBatch(ns, workers, target, state, targetInfo, fleetSnapshot) {
 
     const fleet = fleetSnapshot || getFleetRam(ns, workers, state.effectiveHomeReserveGb);
 
-    if (fleet.free > 512 && batchRam > 0) {
+    if (fleet.free > 128 && batchRam > 0) {
         const ramBudget = Math.min(
-            fleet.free * 0.25,
-            fleet.free / Math.max(1, state.maxBatches / 10)
+            fleet.free * (state.fastStart ? 0.40 : 0.25),
+            fleet.free / Math.max(1, state.maxBatches / (state.fastStart ? 6 : 10))
         );
 
-        const scale = clamp(ramBudget / batchRam, 1, state.fastStart ? 96 : 64);
+        const scale = clamp(ramBudget / batchRam, 1, state.fastStart ? 128 : 64);
 
         hackThreads = Math.max(1, Math.floor(hackThreads * scale));
         growThreads = Math.max(1, Math.ceil(growThreads * scale));
@@ -507,8 +504,8 @@ function getServerFreeRam(ns, host, homeReserveGb = 0) {
 }
 
 function getMinBatchFreeRam(state, fleet) {
-    if (state.fastStart) return Math.max(8, Math.min(32, Math.floor(fleet.total * 0.03)));
-    return 64;
+    if (state.fastStart) return Math.max(4, Math.min(16, Math.floor(fleet.total * 0.02)));
+    return 32;
 }
 
 function resolveHomeReserveGb(ns, requestedReserveGb) {
@@ -533,7 +530,8 @@ function isFastStart(ns, fleet) {
     const pservCount = pserv.length;
     const minPservRam = pservCount ? Math.min(...pserv.map(s => ns.getServerMaxRam(s))) : 0;
     const totalGb = fleet.total;
-    return totalGb < 2048 || pservCount < 8 || minPservRam < 128;
+
+    return totalGb < 2048 || pservCount < 16 || minPservRam < 256;
 }
 
 function chooseActiveTargets(rankedTargets) {
@@ -594,9 +592,13 @@ function rankTargets(ns, fleet) {
         .filter(s => ns.getServerRequiredHackingLevel(s) <= playerHack)
         .filter(s => {
             const maxMoney = ns.getServerMaxMoney(s);
-            if (playerHack > 3000) return maxMoney >= 1e11;
-            if (playerHack > 1000) return maxMoney >= 1e9;
-            if (playerHack > 500) return maxMoney >= 1e8;
+
+            if (playerHack >= 3000) return maxMoney >= 1e11;
+            if (playerHack >= 1000) return maxMoney >= 1e9;
+            if (playerHack >= 500) return maxMoney >= 1e8;
+            if (playerHack >= 250) return maxMoney >= 5e7;
+            if (playerHack >= 100) return maxMoney >= 5e6;
+
             return true;
         });
 
@@ -615,10 +617,6 @@ function scoreSingleTarget(ns, server, fleet) {
     const maxMoney = ns.getServerMaxMoney(server);
     if (maxMoney <= 0) return 0;
 
-    const playerHack = ns.getHackingLevel();
-    if (playerHack > 3000 && maxMoney < 1e11) return 0;
-    if (playerHack > 1000 && maxMoney < 1e9) return 0;
-
     const moneyAvail = ns.getServerMoneyAvailable(server);
     const moneyRatio = maxMoney > 0 ? moneyAvail / maxMoney : 0;
 
@@ -630,7 +628,7 @@ function scoreSingleTarget(ns, server, fleet) {
     const weakenTime = Math.max(1, ns.getWeakenTime(server));
 
     const value = Math.pow(maxMoney, 0.92);
-    const prepPenalty = (moneyRatio < 0.75 || (curSec - minSec) > 2) ? 0.6 : 1.0;
+    const prepPenalty = (moneyRatio < 0.92 || (curSec - minSec) > 1.5) ? 0.78 : 1.0;
 
     return (value * chance * prepPenalty) / weakenTime / secPenalty;
 }
@@ -674,7 +672,6 @@ function countActiveBatches(ns, servers) {
             const args = proc.args || [];
             const id = typeof args[2] === "string" ? args[2] : null;
             if (!id) continue;
-
             if (id.startsWith("prep-")) continue;
 
             const pieces = id.split("-");
