@@ -49,8 +49,10 @@ export async function main(ns) {
             const tuneNote = tuner?.tuneNote || "no-tuner";
             const controllerHackPct = Number.isFinite(tuner?.hackPct) ? tuner.hackPct : null;
             const controllerSpacer = Number.isFinite(tuner?.spacer) ? tuner.spacer : null;
+            const fastStart = !!tuner?.fastStart;
+            const homeReserveGb = Number.isFinite(tuner?.homeReserveGb) ? tuner.homeReserveGb : null;
 
-            const policy = resolveSpendPolicy(spendMode, controllerPolicy, fleetUsedRatio);
+            const policy = resolveSpendPolicy(spendMode, controllerPolicy, fleetUsedRatio, fastStart);
 
             const reserve = computeReserve({
                 policy,
@@ -58,6 +60,7 @@ export async function main(ns) {
                 ramCost,
                 coreCost,
                 augReserve,
+                fastStart,
             });
 
             const budget = Math.max(0, money - reserve);
@@ -74,6 +77,8 @@ export async function main(ns) {
                 ramFreeRatio,
                 fleetUsedRatio,
                 currentMinPurchasedRam,
+                fastStart,
+                purchasedCount,
             });
 
             let boughtOrUpgraded = false;
@@ -111,6 +116,8 @@ export async function main(ns) {
                 ramFreeRatio,
                 fleetUsedRatio,
                 targetPurchasedRam,
+                fastStart,
+                homeReserveGb,
             });
         } catch (err) {
             ns.print(`ERROR: ${String(err)}`);
@@ -120,7 +127,12 @@ export async function main(ns) {
     }
 }
 
-function resolveSpendPolicy(spendMode, controllerPolicy, fleetUsedRatio) {
+function resolveSpendPolicy(spendMode, controllerPolicy, fleetUsedRatio, fastStart = false) {
+    if (fastStart && spendMode !== "save_for_augs") {
+        if (fleetUsedRatio == null || fleetUsedRatio < 0.70) return "turbo_buy_servers";
+        return "buy_servers";
+    }
+
     if (spendMode === "growth") {
         if (fleetUsedRatio != null) {
             if (fleetUsedRatio < 0.20) return "turbo_buy_servers";
@@ -168,6 +180,8 @@ function maybeLog(ns, ctx) {
         ramFreeRatio,
         fleetUsedRatio,
         targetPurchasedRam,
+        fastStart,
+        homeReserveGb,
     } = ctx;
 
     const moneyBucket = Math.floor(money / moneyBucketSize);
@@ -200,7 +214,8 @@ function maybeLog(ns, ctx) {
         `ramCost=${fmtMoney(ns, ramCost)}, coreCost=${fmtMoney(ns, coreCost)}, ` +
         `reserve=${fmtMoney(ns, reserve)}, budget=${fmtMoney(ns, budget)}, money=${fmtMoney(ns, money)}, ` +
         `policy=${policy}, controller=${controllerPolicy}, used=${fleetUsedText}, freeRam=${ramFreeText}, ` +
-        `hpct=${hackPctText}, spacer=${spacerText}, ` +
+        `hpct=${hackPctText}, spacer=${spacerText}, fastStart=${fastStart ? "on" : "off"}, ` +
+        `reserveHome=${homeReserveGb == null ? "n/a" : `${Math.round(homeReserveGb)}GB`}, ` +
         `pservTarget=${targetPurchasedRam > 0 ? ns.formatRam(targetPurchasedRam) : "none"} ` +
         `(${tuneNote})`
     );
@@ -253,11 +268,13 @@ function readStoredNumber(key, fallback) {
     return Number.isFinite(value) ? value : fallback;
 }
 
-function computeReserve({ policy, money, ramCost, coreCost, augReserve }) {
+function computeReserve({ policy, money, ramCost, coreCost, augReserve, fastStart = false }) {
     const cheaperHomeUpgrade = Math.min(ramCost, coreCost);
 
     if (policy === "turbo_buy_servers") {
-        return Math.max(2e9, Math.min(cheaperHomeUpgrade * 0.05, money * 0.03));
+        return fastStart
+            ? Math.max(1e9, Math.min(cheaperHomeUpgrade * 0.03, money * 0.015))
+            : Math.max(2e9, Math.min(cheaperHomeUpgrade * 0.05, money * 0.03));
     }
 
     if (policy === "buy_servers") {
@@ -279,27 +296,27 @@ function computeReserve({ policy, money, ramCost, coreCost, augReserve }) {
     return Math.max(7.5e9, Math.min(cheaperHomeUpgrade * 0.50, money * 0.40));
 }
 
-function decideTargetPurchasedRam({ ns, policy, budget, money, ramFreeRatio, fleetUsedRatio, currentMinPurchasedRam }) {
+function decideTargetPurchasedRam({ ns, policy, budget, money, ramFreeRatio, fleetUsedRatio, currentMinPurchasedRam, fastStart = false, purchasedCount = 0 }) {
     const maxPurchasedRam = ns.getPurchasedServerMaxRam();
     const purchasedLimit = ns.getPurchasedServerLimit();
-    const purchasedCount = ns.getPurchasedServers().length;
     const base = Math.max(8, currentMinPurchasedRam || 8);
 
     let spendRatio;
-    if (policy === "turbo_buy_servers") spendRatio = 0.90;
+    if (policy === "turbo_buy_servers") spendRatio = fastStart ? 0.97 : 0.90;
     else if (policy === "buy_servers") spendRatio = 0.70;
     else if (policy === "balanced") spendRatio = 0.40;
     else if (policy === "save_home") spendRatio = 0.15;
     else if (policy === "save_for_augs") spendRatio = 0.05;
     else spendRatio = 0.25;
 
-    if (ramFreeRatio != null && ramFreeRatio > 0.80 && policy !== "save_for_augs") spendRatio *= 1.15;
-    if (fleetUsedRatio != null && fleetUsedRatio < 0.20 && policy === "turbo_buy_servers") spendRatio *= 1.20;
+    if (ramFreeRatio != null && ramFreeRatio > 0.80 && policy !== "save_for_augs") spendRatio *= fastStart ? 1.30 : 1.15;
+    if (fleetUsedRatio != null && fleetUsedRatio < 0.20 && policy === "turbo_buy_servers") spendRatio *= fastStart ? 1.35 : 1.20;
+    if (fastStart && purchasedCount < Math.min(8, ns.getPurchasedServerLimit())) spendRatio *= 1.20;
 
     const spendCap = Math.max(0, Math.min(budget, money * spendRatio));
     if (spendCap <= 0) return 0;
 
-    let target = base;
+    let target = fastStart ? Math.max(base, purchasedCount < 4 ? 32 : 64) : base;
     while (target < maxPurchasedRam) {
         const next = target * 2;
         const nextCost = ns.getPurchasedServerCost(next);
