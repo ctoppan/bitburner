@@ -1,13 +1,13 @@
 # Bitburner Automation Starter
 
-This repo is an opinionated Bitburner automation stack built around a small bootstrap, a safer hacking controller, optional gang automation, and a money-vs-growth spending toggle.
+This repo is an opinionated Bitburner automation stack built around a small bootstrap, an auto-tuning overlap batch controller, purchased-server scaling, and a money-vs-growth spending toggle.
 
 ## Goals
 
 - keep startup simple
 - avoid runaway batch spam that can freeze the game
+- auto-scale after fresh augment installs
 - automate hacking and purchased-server scaling
-- support gang progression without auto-starting crime scripts
 - let you switch between scaling hard and saving cash for augments
 - use multi-target parallel hacking when the fleet is large enough to benefit
 
@@ -20,23 +20,23 @@ This repo is an opinionated Bitburner automation stack built around a small boot
 ```javascript
 /** @param {NS} ns **/
 export async function main(ns) {
-  if (ns.getHostname() !== 'home') {
-    throw new Error('Run the script from home');
+  if (ns.getHostname() !== "home") {
+    throw new Error("Run the script from home");
   }
 
-  const repoBase = 'https://raw.githubusercontent.com/ctoppan/bitburner/master/src';
-  const file = 'initHacking.js';
+  const repoBase = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src";
+  const file = "initHacking.js";
   const url = `${repoBase}/${file}?ts=${Date.now()}`;
 
   ns.tprint(`[start.js] Refreshing ${file}...`);
 
-  if (ns.fileExists(file, 'home')) {
-    ns.rm(file, 'home');
+  if (ns.fileExists(file, "home")) {
+    ns.rm(file, "home");
   }
 
   const ok = await ns.wget(url, file);
 
-  if (!ok || !ns.fileExists(file, 'home')) {
+  if (!ok || !ns.fileExists(file, "home")) {
     ns.tprint(`[start.js] Failed to download ${file}`);
     return;
   }
@@ -56,7 +56,6 @@ The normal boot path is:
 4. `spider.js`
 5. `overlapBatchController.js`
 6. `playerServers.js`
-7. `progressionManager.js`
 
 ## Main Components
 
@@ -68,23 +67,55 @@ It:
 - downloads the current script set from GitHub
 - clears old runtime state used by the hacking stack
 - starts `killAll.js` for a clean reset
+- passes default startup args into `overlapBatchController.js`
 - launches `playerServers.js`
-- launches `progressionManager.js`
+
+Default overlap startup args are:
+
+```text
+0.03 150 128
+```
+
+That means:
+- start at 3% hack target
+- start at 150 ms spacing
+- reserve 128 GB on `home`
+
+These are only starting values. The overlap controller auto-tunes from there.
 
 ### `overlapBatchController.js`
 
 This is the primary hacking engine.
 
 It now supports:
-- dynamic target scoring
-- multi-target parallel hacking
-- prep detection and prep jobs per target
-- RAM-aware scaling
-- dynamic hack percent, spacing, and batch ceilings
+- auto-tuned hack percent and spacer
+- dynamic batch and job caps
+- auto-scaling based on total fleet RAM
+- prep detection with prep waves excluded from real batch counts
+- anti-thrash target locking
+- richer late-game target filtering
+- RAM-aware batch sizing
 - top-target display in the tail window
 - tuner state publishing for `playerServers.js`
 
-When there is a lot of free fleet RAM, it will spread work across multiple profitable targets instead of trying to force everything into one server.
+Normal usage is:
+
+```text
+run overlapBatchController.js
+```
+
+You can still override the starting point manually:
+
+```text
+run overlapBatchController.js 0.05 100 128
+```
+
+That means:
+- start at 5% hack target
+- start at 100 ms spacing
+- reserve 128 GB on `home`
+
+The controller still auto-tunes after launch.
 
 ### `playerServers.js`
 
@@ -96,14 +127,6 @@ It supports three spend modes:
 - `save_for_augs`
 
 It reads the current mode from local storage so you can switch modes without editing the script.
-
-### `progressionManager.js`
-
-This script handles progression outside pure hacking.
-
-It currently focuses on gang-side progression.
-
-Crime scripts are manual-only by default.
 
 ## Spend Modes
 
@@ -172,7 +195,6 @@ These normally should not be started by hand during normal play:
 - `spider.js`
 - `overlapBatchController.js`
 - `playerServers.js`
-- `progressionManager.js`
 - `prepTarget.js`
 - `batchHack.js`
 - `batchGrow.js`
@@ -189,28 +211,13 @@ Do not run these with `run` or `exec`.
 
 These are intended for the browser console and interact with the UI directly.
 
-### Situational manual script
+### Optional manual scripts
 
 - `gangFastAscender.js`
-
-### Optional manual crime scripts
-
-These are manual-only by default:
-
 - `commitCrime.js`
 - `karmaReducer.js`
 - `getCrimesData.js`
 - `getCrimesData2.js`
-
-Crime automation is no longer auto-started.
-
-## Gang Automation
-
-Gang automation assumes:
-- the gang API is available
-- you have joined a faction that can form a gang
-
-`progressionManager.js` will try to create the gang automatically once those conditions are met and then hand off to `prepareGang.js` and `gangManager.js`.
 
 ## Why Money Can Look Low
 
@@ -253,6 +260,7 @@ This repo tries to reduce that risk by:
 - using more conservative spacing when needed
 - avoiding multiple controller families running at once
 - keeping `playerServers.js` and controller state coordinated
+- excluding prep waves from real batch ceilings
 
 ## Recommended Usage
 
@@ -260,6 +268,12 @@ This repo tries to reduce that risk by:
 
 ```text
 run start.js
+```
+
+### Direct controller run
+
+```text
+run overlapBatchController.js
 ```
 
 ### Scale hard
@@ -278,12 +292,6 @@ run setSpendMode.js save_for_augs 75000000000
 
 ```text
 run fleetfree.js
-```
-
-### Manual gang optimization later
-
-```text
-run gangFastAscender.js
 ```
 
 ## Repo Source

@@ -3,6 +3,10 @@ const baseUrl = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src/
 // Toggle which hacking system to run
 const USE_OVERLAP_BATCH = true;
 
+// Default overlap controller startup args.
+// These are just starting values. overlapBatchController.js auto-tunes from here.
+const OVERLAP_ARGS = [0.03, 150, 128];
+
 // Home-upgrade coordination for non-Singularity play.
 // Update these after each manual home purchase.
 const HOME_RAM_TARGET = 316.788e9;
@@ -111,9 +115,13 @@ export async function main(ns) {
   }
 
   const nextScript = USE_OVERLAP_BATCH ? "overlapBatchController.js" : "runHacking.js";
+  const nextArgs = USE_OVERLAP_BATCH ? OVERLAP_ARGS : [];
 
-  ns.tprint(`[${localeHHMMSS()}] Starting killAll.js -> ${nextScript}`);
-  ns.run("killAll.js", 1, nextScript);
+  ns.tprint(
+    `[${localeHHMMSS()}] Starting killAll.js -> ${nextScript}${nextArgs.length ? ` ${nextArgs.join(" ")}` : ""}`
+  );
+
+  ns.run("killAll.js", 1, nextScript, ...nextArgs);
 
   await ns.sleep(15000);
 

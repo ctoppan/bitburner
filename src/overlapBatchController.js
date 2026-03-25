@@ -7,7 +7,7 @@ export async function main(ns) {
 
     const state = {
         hackPct: clamp(argHackPct, 0.02, 0.30),
-        spacer: clampInt(argSpacer, 25, 500),
+        spacer: clampInt(argSpacer, 25, 400),
         homeReserveGb: Math.max(0, Number(argHomeReserveGb)),
         maxBatches: Math.max(512, Math.trunc(Number(argMaxBatches) || 0)),
         maxJobs: 12000,
@@ -20,13 +20,13 @@ export async function main(ns) {
         lastTargetSwitchAt: 0,
     };
 
-    const TUNE_INTERVAL = 5000;
+    const TUNE_INTERVAL = 4000;
     const LOOP_SLEEP = 700;
     const TARGET_HOLD_MS = 180000;
     const TARGET_SWITCH_MULTIPLIER = 1.25;
     const MAX_PREP_LAUNCHES_PER_LOOP = 4;
     const MIN_BATCH_FREE_RAM = 64;
-    const TUNER_KEY = "bb_tuner_state_v7";
+    const TUNER_KEY = "bb_tuner_state_v8";
 
     while (true) {
         try {
@@ -147,8 +147,8 @@ export async function main(ns) {
 
 function parseArgs(args) {
     return [
-        Number(args[0] ?? 0.04),
-        Number(args[1] ?? 120),
+        Number(args[0] ?? 0.03),
+        Number(args[1] ?? 150),
         Number(args[2] ?? 128),
         Number(args[3] ?? 0),
     ];
@@ -211,26 +211,26 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     const jobPressure = state.maxJobs > 0 ? activeJobs / state.maxJobs : 1;
     const batchPressure = state.maxBatches > 0 ? activeBatches / state.maxBatches : 1;
 
-    if (ramFreeRatio > 0.90) {
-        state.hackPct = clamp(state.hackPct * 1.15, 0.04, 0.30);
-        state.spacer = clampInt(Math.floor(state.spacer * 0.90), 25, 500);
+    if (ramFreeRatio > 0.92) {
+        state.hackPct = clamp(state.hackPct * 1.18, 0.04, 0.30);
+        state.spacer = clampInt(Math.floor(state.spacer * 0.88), 25, 400);
         state.invest = "buy_servers";
         state.mode = "MULTI";
         state.tuneNote = `ramp_hard free:${pct(ramFreeRatio)}`;
         return;
     }
 
-    if (ramFreeRatio > 0.70) {
-        state.hackPct = clamp(state.hackPct * 1.08, 0.03, 0.25);
-        state.spacer = clampInt(Math.floor(state.spacer * 0.94), 30, 500);
+    if (ramFreeRatio > 0.75) {
+        state.hackPct = clamp(state.hackPct * 1.10, 0.03, 0.25);
+        state.spacer = clampInt(Math.floor(state.spacer * 0.94), 30, 400);
         state.invest = "buy_servers";
         state.mode = "MULTI";
         state.tuneNote = `ramp_up free:${pct(ramFreeRatio)}`;
         return;
     }
 
-    if (ramFreeRatio < 0.10) {
-        state.hackPct = clamp(state.hackPct * 0.90, 0.01, 0.16);
+    if (ramFreeRatio < 0.12) {
+        state.hackPct = clamp(state.hackPct * 0.90, 0.01, 0.18);
         state.spacer = clampInt(Math.floor(state.spacer * 1.08), 35, 700);
         state.invest = "save_home";
         state.tuneNote = `backoff_ram_limited free:${pct(ramFreeRatio)}`;
@@ -238,11 +238,13 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
     }
 
     if (jobPressure > 0.95 && ramFreeRatio > 0.20) {
+        state.spacer = clampInt(state.spacer + 5, 25, 700);
         state.tuneNote = `job_limited jobs:${pct(jobPressure)}`;
         return;
     }
 
     if (batchPressure > 0.95 && ramFreeRatio > 0.20) {
+        state.hackPct = clamp(state.hackPct * 1.03, 0.02, 0.30);
         state.tuneNote = `batch_limited batches:${pct(batchPressure)}`;
         return;
     }
@@ -254,7 +256,6 @@ function tuneState(state, fleet, activeJobs, activeBatches, targetInfo) {
         return;
     }
 
-    state.invest = ramFreeRatio > 0.30 ? "buy_servers" : "balanced";
     state.tuneNote = `stable free:${pct(ramFreeRatio)} jobs:${pct(jobPressure)} batches:${pct(batchPressure)}`;
 }
 
@@ -654,7 +655,7 @@ function buildSummary(ns, state, fleet, target, targetScore, targetInfo, activeJ
     const lines = [
         `Mode: ${state.mode} x${launchedThisLoop}/${maxLaunchesThisLoop} avail:${Math.floor(fleet.free)} fleet:${Math.floor(fleet.total)} time:${new Date().getSeconds()}`,
         `jobs:${activeJobs}/${state.maxJobs} batches:${activeBatches}/${state.maxBatches}`,
-        `Tune: dynamic hpct:${(state.hackPct * 100).toFixed(2)} spacer:${state.spacer} maxB:${state.maxBatches}`,
+        `Tune: auto hpct:${(state.hackPct * 100).toFixed(2)} spacer:${state.spacer} maxB:${state.maxBatches}`,
         `Invest: ${state.invest}`,
         `Tune note: ${state.tuneNote}`,
         `Action: ${lastAction}`,
