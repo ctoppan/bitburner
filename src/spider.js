@@ -1,54 +1,43 @@
-import { settings, setItem } from 'common.js'
+import { settings, setItem } from "common.js";
 
-const hackPrograms = ['BruteSSH.exe', 'FTPCrack.exe', 'relaySMTP.exe', 'HTTPWorm.exe', 'SQLInject.exe']
+const hackPrograms = ["BruteSSH.exe", "FTPCrack.exe", "relaySMTP.exe", "HTTPWorm.exe", "SQLInject.exe"];
 
 function getPlayerDetails(ns) {
-  let portHacks = 0
+  let portHacks = 0;
 
-  hackPrograms.forEach((hackProgram) => {
-    if (ns.fileExists(hackProgram, 'home')) {
-      portHacks += 1
+  for (const hackProgram of hackPrograms) {
+    if (ns.fileExists(hackProgram, "home")) {
+      portHacks += 1;
     }
-  })
+  }
 
   return {
     hackingLevel: ns.getHackingLevel(),
     portHacks,
-  }
-}
-
-function allHacks(host) {
-  ns.brutessh(host)
-  ns.ftpcrack(host)
-  ns.relaysmtp(host)
-  ns.httpworm(host)
-  ns.sqlinject(host)
+  };
 }
 
 function localeHHMMSS(ms = 0) {
-  if (!ms) {
-    ms = new Date().getTime()
-  }
-
-  return new Date(ms).toLocaleTimeString()
+  if (!ms) ms = Date.now();
+  return new Date(ms).toLocaleTimeString();
 }
 
+/** @param {NS} ns **/
 export async function main(ns) {
-  ns.tprint(`[${localeHHMMSS()}] Starting spider.js`)
+  ns.tprint(`[${localeHHMMSS()}] Starting spider.js`);
 
-  const scriptToRunAfter = ns.args[0]
+  const scriptToRunAfter = String(ns.args[0] ?? "");
+  const scriptArgs = ns.args.slice(1);
 
-  let hostname = ns.getHostname()
-
-  if (hostname !== 'home') {
-    throw new Exception('Run the script from home')
+  if (ns.getHostname() !== "home") {
+    throw new Error("Run the script from home");
   }
 
-  const serverMap = { servers: {}, lastUpdate: new Date().getTime() }
-  const scanArray = ['home']
+  const serverMap = { servers: {}, lastUpdate: Date.now() };
+  const scanArray = ["home"];
 
   while (scanArray.length) {
-    const host = scanArray.shift()
+    const host = scanArray.shift();
 
     serverMap.servers[host] = {
       host,
@@ -60,92 +49,107 @@ export async function main(ns) {
       baseSecurityLevel: ns.getServerBaseSecurityLevel(host),
       ram: ns.getServerMaxRam(host),
       files: ns.ls(host),
-    }
+    };
 
-    const playerDetails = getPlayerDetails(ns)
+    const playerDetails = getPlayerDetails(ns);
     if (!ns.hasRootAccess(host)) {
-      if (serverMap.servers[host].ports <= playerDetails.portHacks && serverMap.servers[host].hackingLevel <= playerDetails.hackingLevel) {
-        hackPrograms.forEach((hackProgram) => {
-          if (ns.fileExists(hackProgram, 'home')) {
-            ns[hackProgram.split('.').shift().toLocaleLowerCase()](host)
-          }
-        })
-        ns.nuke(host)
+      if (
+        serverMap.servers[host].ports <= playerDetails.portHacks &&
+        serverMap.servers[host].hackingLevel <= playerDetails.hackingLevel
+      ) {
+        for (const hackProgram of hackPrograms) {
+          if (!ns.fileExists(hackProgram, "home")) continue;
+
+          const fn = hackProgram.split(".")[0].toLowerCase();
+          try {
+            ns[fn](host);
+          } catch {}
+        }
+
+        try {
+          ns.nuke(host);
+        } catch {}
       }
     }
 
-    const connections = ns.scan(host) || ['home']
-    serverMap.servers[host].connections = connections
+    const connections = ns.scan(host) || ["home"];
+    serverMap.servers[host].connections = connections;
 
-    connections.filter((hostname) => !serverMap.servers[hostname]).forEach((hostname) => scanArray.push(hostname))
+    for (const nextHost of connections) {
+      if (!serverMap.servers[nextHost]) {
+        scanArray.push(nextHost);
+      }
+    }
   }
 
-  let hasAllParents = false
+  let hasAllParents = false;
 
   while (!hasAllParents) {
-    hasAllParents = true
+    hasAllParents = true;
 
-    Object.keys(serverMap.servers).forEach((hostname) => {
-      const server = serverMap.servers[hostname]
+    for (const hostname of Object.keys(serverMap.servers)) {
+      const server = serverMap.servers[hostname];
 
-      if (!server.parent) hasAllParents = false
+      if (!server.parent) hasAllParents = false;
 
-      if (hostname === 'home') {
-        server.parent = 'home'
-        server.children = server.children ? server.children : []
+      if (hostname === "home") {
+        server.parent = "home";
+        server.children = server.children ? server.children : [];
       }
 
-      if (hostname.includes('pserv-')) {
-        server.parent = 'home'
-        server.children = []
+      if (hostname.includes("pserv-")) {
+        server.parent = "home";
+        server.children = [];
 
         if (serverMap.servers[server.parent].children) {
-          serverMap.servers[server.parent].children.push(hostname)
+          serverMap.servers[server.parent].children.push(hostname);
         } else {
-          serverMap.servers[server.parent].children = [hostname]
+          serverMap.servers[server.parent].children = [hostname];
         }
       }
 
       if (!server.parent) {
         if (server.connections.length === 1) {
-          server.parent = server.connections[0]
-          server.children = []
+          server.parent = server.connections[0];
+          server.children = [];
 
           if (serverMap.servers[server.parent].children) {
-            serverMap.servers[server.parent].children.push(hostname)
+            serverMap.servers[server.parent].children.push(hostname);
           } else {
-            serverMap.servers[server.parent].children = [hostname]
+            serverMap.servers[server.parent].children = [hostname];
           }
         } else {
           if (!server.children) {
-            server.children = []
+            server.children = [];
           }
 
           if (server.children.length) {
-            const parent = server.connections.filter((hostname) => !server.children.includes(hostname))
+            const parent = server.connections.filter((name) => !server.children.includes(name));
 
             if (parent.length === 1) {
-              server.parent = parent.shift()
+              server.parent = parent.shift();
 
               if (serverMap.servers[server.parent].children) {
-                serverMap.servers[server.parent].children.push(hostname)
+                serverMap.servers[server.parent].children.push(hostname);
               } else {
-                serverMap.servers[server.parent].children = [hostname]
+                serverMap.servers[server.parent].children = [hostname];
               }
             }
           }
         }
       }
-    })
+    }
   }
 
-  setItem(settings().keys.serverMap, serverMap)
+  setItem(settings().keys.serverMap, serverMap);
 
   if (!scriptToRunAfter) {
-    ns.tprint(`[${localeHHMMSS()}] Spawning mainHack.js`)
-    ns.spawn('mainHack.js', 1)
+    ns.tprint(`[${localeHHMMSS()}] Spawning mainHack.js`);
+    ns.spawn("mainHack.js", 1);
   } else {
-    ns.tprint(`[${localeHHMMSS()}] Spawning ${scriptToRunAfter}`)
-    ns.spawn(scriptToRunAfter, 1)
+    ns.tprint(
+      `[${localeHHMMSS()}] Spawning ${scriptToRunAfter}${scriptArgs.length ? ` ${scriptArgs.join(" ")}` : ""}`
+    );
+    ns.spawn(scriptToRunAfter, 1, ...scriptArgs);
   }
 }

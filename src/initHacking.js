@@ -9,12 +9,16 @@ const treeApiUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/git/
 // Toggle which hacking system to run
 const USE_OVERLAP_BATCH = true;
 
-// Default overlap controller startup args.
-// These are just starting values. overlapBatchController.js auto-tunes from here.
-const OVERLAP_ARGS = [0.03, 150, 128];
+// Modern overlap args:
+// [hackPct, homeReserveGb, maxBatches, spacer]
+// Use -1 to enable auto home reserve.
+const OVERLAP_ARGS = [0.03, -1, 1024, 30];
+
+// Set growth mode automatically on fresh starts unless user already picked something.
+const AUTO_SET_SPEND_MODE_IF_MISSING = true;
+const DEFAULT_SPEND_MODE = "growth";
 
 // Home-upgrade coordination for non-Singularity play.
-// Update these after each manual home purchase.
 const HOME_RAM_TARGET = 316.788e9;
 const HOME_CORE_TARGET = 421.875e9;
 const PREFER_HOME_RAM = true;
@@ -22,6 +26,7 @@ const CORE_COST_VS_RAM_COST_THRESHOLD = 0.6;
 const HOME_RESERVE_BUFFER = 1.1;
 
 const REPO_TREE_CACHE_FILE = "/Temp/initHacking.repoTree.json";
+const valuesToRemove = ["BB_SERVER_MAP"];
 
 function stockApiUnlocked(ns) {
   try {
@@ -107,9 +112,7 @@ async function getFilesToDownload(ns) {
 
     return files;
   } catch (error) {
-    ns.tprint(
-      `[WARN ${localeHHMMSS()}] Falling back to built-in file list: ${String(error)}`
-    );
+    ns.tprint(`[WARN ${localeHHMMSS()}] Falling back to built-in file list: ${String(error)}`);
     return getFallbackFiles();
   } finally {
     try {
@@ -132,11 +135,22 @@ function getHomeUpgradeTarget() {
   return HOME_RAM_TARGET;
 }
 
-const valuesToRemove = ["BB_SERVER_MAP"];
-
 function localeHHMMSS(ms = 0) {
   if (!ms) ms = Date.now();
   return new Date(ms).toLocaleTimeString();
+}
+
+function ensureSpendMode(ns) {
+  if (!AUTO_SET_SPEND_MODE_IF_MISSING) return;
+
+  try {
+    const key = "bb_spend_mode_v1";
+    const existing = localStorage.getItem(key);
+    if (!existing) {
+      localStorage.setItem(key, JSON.stringify(DEFAULT_SPEND_MODE));
+      ns.tprint(`[${localeHHMMSS()}] Default spend mode set to ${DEFAULT_SPEND_MODE}`);
+    }
+  } catch {}
 }
 
 export async function main(ns) {
@@ -156,13 +170,8 @@ export async function main(ns) {
   for (const filename of filesToDownload) {
     const path = `${baseUrl}${filename}?ts=${Date.now()}`;
 
-    try {
-      await ns.scriptKill(filename, "home");
-    } catch {}
-
-    try {
-      await ns.rm(filename, "home");
-    } catch {}
+    try { await ns.scriptKill(filename, "home"); } catch {}
+    try { await ns.rm(filename, "home"); } catch {}
 
     await ns.sleep(50);
 
@@ -179,6 +188,8 @@ export async function main(ns) {
       localStorage.removeItem(key);
     } catch {}
   }
+
+  ensureSpendMode(ns);
 
   const nextScript = USE_OVERLAP_BATCH ? "overlapBatchController.js" : "runHacking.js";
   const nextArgs = USE_OVERLAP_BATCH ? OVERLAP_ARGS : [];
@@ -201,4 +212,8 @@ export async function main(ns) {
       `[${localeHHMMSS()}] Stock API detected, but stockTrader.js auto-start is disabled for now`
     );
   }
+
+  // Keep the constants referenced so they are easy to tweak later.
+  void getHomeUpgradeTarget();
+  void HOME_RESERVE_BUFFER;
 }
