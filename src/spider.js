@@ -22,6 +22,38 @@ function localeHHMMSS(ms = 0) {
   return new Date(ms).toLocaleTimeString();
 }
 
+function openPorts(ns, host) {
+  if (ns.fileExists("BruteSSH.exe", "home")) {
+    try {
+      ns.brutessh(host);
+    } catch {}
+  }
+
+  if (ns.fileExists("FTPCrack.exe", "home")) {
+    try {
+      ns.ftpcrack(host);
+    } catch {}
+  }
+
+  if (ns.fileExists("relaySMTP.exe", "home")) {
+    try {
+      ns.relaysmtp(host);
+    } catch {}
+  }
+
+  if (ns.fileExists("HTTPWorm.exe", "home")) {
+    try {
+      ns.httpworm(host);
+    } catch {}
+  }
+
+  if (ns.fileExists("SQLInject.exe", "home")) {
+    try {
+      ns.sqlinject(host);
+    } catch {}
+  }
+}
+
 /** @param {NS} ns **/
 export async function main(ns) {
   ns.tprint(`[${localeHHMMSS()}] Starting spider.js`);
@@ -52,19 +84,13 @@ export async function main(ns) {
     };
 
     const playerDetails = getPlayerDetails(ns);
+
     if (!ns.hasRootAccess(host)) {
       if (
         serverMap.servers[host].ports <= playerDetails.portHacks &&
         serverMap.servers[host].hackingLevel <= playerDetails.hackingLevel
       ) {
-        for (const hackProgram of hackPrograms) {
-          if (!ns.fileExists(hackProgram, "home")) continue;
-
-          const fn = hackProgram.split(".")[0].toLowerCase();
-          try {
-            ns[fn](host);
-          } catch {}
-        }
+        openPorts(ns, host);
 
         try {
           ns.nuke(host);
