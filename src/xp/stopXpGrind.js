@@ -1,6 +1,7 @@
 /** @param {NS} ns **/
 export async function main(ns) {
-  const worker = "xpGrind.js";
+  const worker = "xp/xpGrind.js";
+  const normalize = (name) => String(name || "").replace(/^\/+/, "");
   const seen = new Set(["home"]);
   const queue = ["home"];
   let killed = 0;
@@ -16,7 +17,7 @@ export async function main(ns) {
     }
 
     for (const proc of ns.ps(host)) {
-      if (proc.filename === worker) {
+      if (normalize(proc.filename) === worker) {
         try {
           ns.kill(proc.pid);
           killed++;

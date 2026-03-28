@@ -38,48 +38,52 @@ function stockApiUnlocked(ns) {
 
 function getFallbackFiles() {
   return [
-    "backdoorHelper.js",
-    "batchController.js",
-    "batchGrow.js",
-    "batchHack.js",
-    "batchWeaken.js",
-    "browserAutoHack.js",
-    "commitCrime.js",
-    "common.js",
-    "contracter.js",
-    "factionChecklist.js",
-    "find.js",
-    "fleetfree.js",
-    "gangFastAscender.js",
-    "gangManager.js",
-    "getCrimesData.js",
-    "getCrimesData2.js",
-    "grow.js",
-    "hack.js",
-    "hackingMission.js",
-    "karmaReducer.js",
-    "killAll.js",
-    "mainHack.js",
-    "overlapBatchController.js",
-    "playerServers.js",
-    "prepareGang.js",
-    "prepTarget.js",
-    "progressionManager.js",
-    "runHacking.js",
-    "sellAllStock.js",
-    "setSpendMode.js",
-    "share-home.js",
-    "share-manager.js",
-    "share-worker.js",
-    "spider.js",
-    "start.js",
-    "stockMarketer.js",
-    "stockMarketer4S.js",
-    "stockTrader.js",
-    "stopXpGrind.js",
-    "weaken.js",
-    "xpDistributor.js",
-    "xpGrind.js",
+    "bootstrap/cleanup.js",
+    "bootstrap/start-download-only.js",
+    "bootstrap/start.js",
+    "crime/check-karma.js",
+    "crime/commitCrime.js",
+    "crime/getCrimesData.js",
+    "crime/getCrimesData2.js",
+    "crime/karmaReducer.js",
+    "gang/gangFastAscender_v2.js",
+    "gang/gangManager_v2.js",
+    "gang/prepareGang.js",
+    "hacking/batch/batchController.js",
+    "hacking/batch/batchGrow.js",
+    "hacking/batch/batchHack.js",
+    "hacking/batch/batchWeaken.js",
+    "hacking/batch/overlapBatchController.js",
+    "hacking/main/backdoorHelper.js",
+    "hacking/main/find.js",
+    "hacking/main/fleetfree.js",
+    "hacking/main/grow.js",
+    "hacking/main/hack.js",
+    "hacking/main/killAll.js",
+    "hacking/main/mainHack.js",
+    "hacking/main/network-status.js",
+    "hacking/main/playerServers.js",
+    "hacking/main/prepTarget.js",
+    "hacking/main/runHacking.js",
+    "hacking/main/spider.js",
+    "hacking/main/spread-hack.js",
+    "hacking/main/weaken.js",
+    "manual/browser/browserAutoHack.js",
+    "manual/browser/hackingMission.js",
+    "share/share-home.js",
+    "share/share-manager.js",
+    "share/share-worker.js",
+    "stockmarket/sellAllStock.js",
+    "stockmarket/stockMarketer.js",
+    "stockmarket/stockMarketer4S.js",
+    "stockmarket/stockTrader.js",
+    "utils/common.js",
+    "utils/contracter.js",
+    "utils/factionChecklist.js",
+    "utils/setSpendMode.js",
+    "xp/stopXpGrind.js",
+    "xp/xpDistributor.js",
+    "xp/xpGrind.js",
   ];
 }
 
@@ -103,7 +107,7 @@ async function getFilesToDownload(ns) {
       .filter((path) => typeof path === "string")
       .filter((path) => path.startsWith(REPO_SRC_DIR) && path.endsWith(".js"))
       .map((path) => path.slice(REPO_SRC_DIR.length))
-      .filter((path) => path && path !== "initHacking.js")
+      .filter((path) => path && path !== "bootstrap/initHacking.js")
       .sort((a, b) => a.localeCompare(b));
 
     if (!files.length) {
@@ -191,20 +195,20 @@ export async function main(ns) {
 
   ensureSpendMode(ns);
 
-  const nextScript = USE_OVERLAP_BATCH ? "overlapBatchController.js" : "runHacking.js";
+  const nextScript = USE_OVERLAP_BATCH ? "/hacking/batch/overlapBatchController.js" : "/hacking/main/runHacking.js";
   const nextArgs = USE_OVERLAP_BATCH ? OVERLAP_ARGS : [];
 
   ns.tprint(
     `[${localeHHMMSS()}] Starting killAll.js -> ${nextScript}${nextArgs.length ? ` ${nextArgs.join(" ")}` : ""}`
   );
 
-  ns.run("killAll.js", 1, nextScript, ...nextArgs);
+  ns.run("/hacking/main/killAll.js", 1, nextScript, ...nextArgs);
 
   await ns.sleep(15000);
 
-  if (!ns.isRunning("playerServers.js", "home")) {
+  if (!ns.isRunning("/hacking/main/playerServers.js", "home")) {
     ns.tprint(`[${localeHHMMSS()}] Starting playerServers.js`);
-    ns.run("playerServers.js", 1);
+    ns.run("/hacking/main/playerServers.js", 1);
   }
 
   if (stockEnabled) {

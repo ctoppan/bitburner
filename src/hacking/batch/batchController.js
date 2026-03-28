@@ -5,7 +5,7 @@ export async function main(ns) {
   const spacer = Math.max(100, Number(ns.args[2] ?? 200))
   const homeReserve = Math.max(16, Number(ns.args[3] ?? 64))
 
-  const scripts = ['batchHack.js', 'batchGrow.js', 'batchWeaken.js']
+  const scripts = ['/hacking/batch/batchHack.js', '/hacking/batch/batchGrow.js', '/hacking/batch/batchWeaken.js']
   for (const script of scripts) {
     if (!ns.fileExists(script, 'home')) {
       ns.tprint(`Missing ${script} on home`)
@@ -212,25 +212,25 @@ function buildBatch(ns, target, hackPct, spacer) {
 
   return [
     {
-      script: 'batchHack.js',
+      script: '/hacking/batch/batchHack.js',
       threads: hackThreads,
       delay: Math.max(0, landing - spacer * 3 - Date.now() - hackTime),
       batchId,
     },
     {
-      script: 'batchWeaken.js',
+      script: '/hacking/batch/batchWeaken.js',
       threads: weaken1Threads,
       delay: Math.max(0, landing - spacer * 2 - Date.now() - weakenTime),
       batchId,
     },
     {
-      script: 'batchGrow.js',
+      script: '/hacking/batch/batchGrow.js',
       threads: growThreads,
       delay: Math.max(0, landing - spacer * 1 - Date.now() - growTime),
       batchId,
     },
     {
-      script: 'batchWeaken.js',
+      script: '/hacking/batch/batchWeaken.js',
       threads: weaken2Threads,
       delay: Math.max(0, landing - Date.now() - weakenTime),
       batchId,
@@ -240,9 +240,9 @@ function buildBatch(ns, target, hackPct, spacer) {
 
 async function deployBatch(ns, hosts, target, jobs, homeReserve) {
   const ramByScript = {
-    'batchHack.js': ns.getScriptRam('batchHack.js', 'home'),
-    'batchGrow.js': ns.getScriptRam('batchGrow.js', 'home'),
-    'batchWeaken.js': ns.getScriptRam('batchWeaken.js', 'home'),
+    '/hacking/batch/batchHack.js': ns.getScriptRam('/hacking/batch/batchHack.js', 'home'),
+    '/hacking/batch/batchGrow.js': ns.getScriptRam('/hacking/batch/batchGrow.js', 'home'),
+    '/hacking/batch/batchWeaken.js': ns.getScriptRam('/hacking/batch/batchWeaken.js', 'home'),
   }
 
   for (const job of jobs) {
@@ -274,7 +274,7 @@ async function deployBatch(ns, hosts, target, jobs, homeReserve) {
 }
 
 async function runPrepWeaken(ns, hosts, target) {
-  const script = 'batchWeaken.js'
+  const script = '/hacking/batch/batchWeaken.js'
   const ram = ns.getScriptRam(script, 'home')
   const batchId = `prepW-${Date.now()}`
 
@@ -287,8 +287,8 @@ async function runPrepWeaken(ns, hosts, target) {
 }
 
 async function runPrepGrow(ns, hosts, target) {
-  const growRam = ns.getScriptRam('batchGrow.js', 'home')
-  const weakenRam = ns.getScriptRam('batchWeaken.js', 'home')
+  const growRam = ns.getScriptRam('/hacking/batch/batchGrow.js', 'home')
+  const weakenRam = ns.getScriptRam('/hacking/batch/batchWeaken.js', 'home')
   const batchId = `prepG-${Date.now()}`
 
   for (const hostInfo of hosts) {
@@ -296,10 +296,10 @@ async function runPrepGrow(ns, hosts, target) {
     const totalWeaken = Math.floor(hostInfo.freeRam * 0.2 / weakenRam)
 
     if (totalGrow > 0) {
-      ns.exec('batchGrow.js', hostInfo.host, totalGrow, target, 0, `${batchId}-g`)
+      ns.exec('/hacking/batch/batchGrow.js', hostInfo.host, totalGrow, target, 0, `${batchId}-g`)
     }
     if (totalWeaken > 0) {
-      ns.exec('batchWeaken.js', hostInfo.host, totalWeaken, target, 0, `${batchId}-w`)
+      ns.exec('/hacking/batch/batchWeaken.js', hostInfo.host, totalWeaken, target, 0, `${batchId}-w`)
     }
   }
 }

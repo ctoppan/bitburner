@@ -26,7 +26,7 @@ function localeHHMMSS(ms = 0) {
 
 function getCrimesData(ns) {
   ns.tprint(`[${localeHHMMSS()}] Spawning getCrimesData.js`)
-  ns.spawn('getCrimesData.js', 1)
+  ns.spawn('/crime/getCrimesData.js', 1)
 }
 
 function selectCrime(crimes) {

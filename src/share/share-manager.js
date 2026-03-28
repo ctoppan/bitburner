@@ -1,6 +1,6 @@
 /** @param {NS} ns **/
 export async function main(ns) {
-  const worker = "share-worker.js";
+  const worker = "/share/share-worker.js";
   const refreshMs = 10000;
   const homeReserve = 64;
 

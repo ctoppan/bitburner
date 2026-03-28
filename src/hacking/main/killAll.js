@@ -1,21 +1,21 @@
 const scriptsToKillOnHome = [
-  "mainHack.js",
-  "spider.js",
-  "grow.js",
-  "hack.js",
-  "weaken.js",
-  "runHacking.js",
-  "find.js",
-  "prepTarget.js",
-  "batchHack.js",
-  "batchGrow.js",
-  "batchWeaken.js",
-  "batchController.js",
-  "overlapBatchController.js",
-  "backdoorHelper.js",
-  "xpGrind.js",
-  "xpDistributor.js",
-  "stopXpGrind.js",
+  "/hacking/main/mainHack.js",
+  "/hacking/main/spider.js",
+  "/hacking/main/grow.js",
+  "/hacking/main/hack.js",
+  "/hacking/main/weaken.js",
+  "/hacking/main/runHacking.js",
+  "/hacking/main/find.js",
+  "/hacking/main/prepTarget.js",
+  "/hacking/batch/batchHack.js",
+  "/hacking/batch/batchGrow.js",
+  "/hacking/batch/batchWeaken.js",
+  "/hacking/batch/batchController.js",
+  "/hacking/batch/overlapBatchController.js",
+  "/hacking/main/backdoorHelper.js",
+  "/xp/xpGrind.js",
+  "/xp/xpDistributor.js",
+  "/xp/stopXpGrind.js",
 ];
 
 function localeHHMMSS(ms = 0) {
@@ -68,10 +68,10 @@ export async function main(ns) {
 
   ns.tprint(`[${localeHHMMSS()}] All remote processes killed`);
 
-  const nextScript = scriptToRunAfter || "overlapBatchController.js";
+  const nextScript = scriptToRunAfter || "/hacking/batch/overlapBatchController.js";
   ns.tprint(
     `[${localeHHMMSS()}] Spawning spider.js -> ${nextScript}${scriptArgs.length ? ` ${scriptArgs.join(" ")}` : ""}`
   );
 
-  ns.spawn("spider.js", 1, nextScript, ...scriptArgs);
+  ns.spawn("/hacking/main/spider.js", 1, nextScript, ...scriptArgs);
 }

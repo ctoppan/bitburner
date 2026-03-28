@@ -311,8 +311,8 @@ function tryLaunchPrep(ns, workers, target, state, targetInfo, fleetSnapshot) {
         weakenThreads += Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
     }
 
-    const ramWeak = ns.getScriptRam("batchWeaken.js", "home");
-    const ramGrow = ns.getScriptRam("batchGrow.js", "home");
+    const ramWeak = ns.getScriptRam("/hacking/batch/batchWeaken.js", "home");
+    const ramGrow = ns.getScriptRam("/hacking/batch/batchGrow.js", "home");
     const estimatedRam = weakenThreads * ramWeak + growThreads * ramGrow;
     const prepRamCap = Math.max(16, Math.min(fleet.total * 0.10, fleet.free * 0.75));
 
@@ -329,13 +329,13 @@ function tryLaunchPrep(ns, workers, target, state, targetInfo, fleetSnapshot) {
 
     if (weakenThreads > 0) {
         launchedAny = launchDistributed(
-            ns, workers, "batchWeaken.js", weakenThreads, [target, 0, `${launchId}-PW`], state.effectiveHomeReserveGb
+            ns, workers, "/hacking/batch/batchWeaken.js", weakenThreads, [target, 0, `${launchId}-PW`], state.effectiveHomeReserveGb
         ) || launchedAny;
     }
 
     if (growThreads > 0) {
         launchedAny = launchDistributed(
-            ns, workers, "batchGrow.js", growThreads, [target, 120, `${launchId}-PG`], state.effectiveHomeReserveGb
+            ns, workers, "/hacking/batch/batchGrow.js", growThreads, [target, 120, `${launchId}-PG`], state.effectiveHomeReserveGb
         ) || launchedAny;
     }
 
@@ -355,9 +355,9 @@ function tryLaunchBatch(ns, workers, target, state, targetInfo, fleetSnapshot) {
     let weakenHackThreads = Math.max(1, Math.ceil((hackThreads * 0.002) / 0.05));
     let weakenGrowThreads = Math.max(1, Math.ceil((growThreads * 0.004) / 0.05));
 
-    const ramHack = ns.getScriptRam("batchHack.js", "home");
-    const ramGrow = ns.getScriptRam("batchGrow.js", "home");
-    const ramWeak = ns.getScriptRam("batchWeaken.js", "home");
+    const ramHack = ns.getScriptRam("/hacking/batch/batchHack.js", "home");
+    const ramGrow = ns.getScriptRam("/hacking/batch/batchGrow.js", "home");
+    const ramWeak = ns.getScriptRam("/hacking/batch/batchWeaken.js", "home");
     const batchRam =
         hackThreads * ramHack +
         growThreads * ramGrow +
@@ -385,10 +385,10 @@ function tryLaunchBatch(ns, workers, target, state, targetInfo, fleetSnapshot) {
     const spacer = state.spacer;
 
     const jobs = [
-        { script: "batchWeaken.js", threads: weakenHackThreads, args: [target, 0, `${batchId}-W1`] },
-        { script: "batchGrow.js", threads: growThreads, args: [target, Math.max(0, weakenTime - growTime + spacer), `${batchId}-G`] },
-        { script: "batchHack.js", threads: hackThreads, args: [target, Math.max(0, weakenTime - hackTime + spacer * 2), `${batchId}-H`] },
-        { script: "batchWeaken.js", threads: weakenGrowThreads, args: [target, spacer * 3, `${batchId}-W2`] },
+        { script: "/hacking/batch/batchWeaken.js", threads: weakenHackThreads, args: [target, 0, `${batchId}-W1`] },
+        { script: "/hacking/batch/batchGrow.js", threads: growThreads, args: [target, Math.max(0, weakenTime - growTime + spacer), `${batchId}-G`] },
+        { script: "/hacking/batch/batchHack.js", threads: hackThreads, args: [target, Math.max(0, weakenTime - hackTime + spacer * 2), `${batchId}-H`] },
+        { script: "/hacking/batch/batchWeaken.js", threads: weakenGrowThreads, args: [target, spacer * 3, `${batchId}-W2`] },
     ];
 
     let launchedAny = false;
@@ -439,7 +439,7 @@ function enforceHomeReserve(ns, homeReserveGb) {
     if (usedRam <= allowedUsed) return "ok";
 
     const workers = ns.ps("home")
-        .filter(p => ["batchHack.js", "batchGrow.js", "batchWeaken.js"].includes(p.filename))
+        .filter(p => scriptNameMatches(p.filename, ["/hacking/batch/batchHack.js", "/hacking/batch/batchGrow.js", "/hacking/batch/batchWeaken.js"]))
         .map(p => ({
             pid: p.pid,
             filename: p.filename,
@@ -672,11 +672,11 @@ function getTargetInfo(ns, target) {
 
 function countActiveBatchJobs(ns, servers) {
     let total = 0;
-    const names = new Set(["batchHack.js", "batchGrow.js", "batchWeaken.js"]);
+    const names = ["/hacking/batch/batchHack.js", "/hacking/batch/batchGrow.js", "/hacking/batch/batchWeaken.js"];
 
     for (const s of servers) {
         for (const proc of ns.ps(s)) {
-            if (names.has(proc.filename)) total++;
+            if (scriptNameMatches(proc.filename, names)) total++;
         }
     }
 
@@ -688,7 +688,7 @@ function countActiveBatches(ns, servers) {
 
     for (const s of servers) {
         for (const proc of ns.ps(s)) {
-            if (!["batchHack.js", "batchGrow.js", "batchWeaken.js"].includes(proc.filename)) continue;
+            if (!scriptNameMatches(proc.filename, ["/hacking/batch/batchHack.js", "/hacking/batch/batchGrow.js", "/hacking/batch/batchWeaken.js"])) continue;
 
             const args = proc.args || [];
             const id = typeof args[2] === "string" ? args[2] : null;
@@ -771,4 +771,13 @@ function formatScore(v) {
     if (v >= 1e6) return `${(v / 1e6).toFixed(2)}m`;
     if (v >= 1e3) return `${(v / 1e3).toFixed(2)}k`;
     return v.toFixed(2);
+
+function normalizeScriptName(name) {
+    return String(name || "").replace(/^\/+/, "");
+}
+
+function scriptNameMatches(name, candidates) {
+    const normalized = normalizeScriptName(name);
+    return candidates.some(candidate => normalizeScriptName(candidate) === normalized);
+}
 }

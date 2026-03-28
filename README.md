@@ -1,15 +1,22 @@
 # Bitburner Automation Starter
 
-This repo is an opinionated Bitburner automation stack built around a small bootstrap, an auto-tuning overlap batch controller, purchased-server scaling, and a money-vs-growth spending toggle.
+This repo is an opinionated Bitburner automation stack built around a tiny bootstrap, a full-repo downloader, an auto-tuning overlap batch controller, purchased-server scaling, and a money-vs-growth spending toggle.
 
-## Goals
+## Folder Layout
 
-- keep startup simple
-- avoid runaway batch spam that can freeze the game
-- auto-scale after fresh augment installs
-- automate hacking and purchased-server scaling
-- let you switch between scaling hard and saving cash for augments
-- use multi-target parallel hacking when the fleet is large enough to benefit
+```text
+src/
+  bootstrap/
+  hacking/main/
+  hacking/batch/
+  xp/
+  share/
+  stockmarket/
+  gang/
+  crime/
+  utils/
+  manual/browser/
+```
 
 ## Quick Start
 
@@ -25,24 +32,25 @@ export async function main(ns) {
   }
 
   const repoBase = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src";
-  const file = "initHacking.js";
-  const url = `${repoBase}/${file}?ts=${Date.now()}`;
+  const downloader = "bootstrap/start-download-only.js";
+  const nextScript = "/bootstrap/initHacking.js";
+  const url = `${repoBase}/${downloader}?ts=${Date.now()}`;
 
-  ns.tprint(`[start.js] Refreshing ${file}...`);
+  ns.tprint(`[start.js] Refreshing ${downloader}...`);
 
-  if (ns.fileExists(file, "home")) {
-    ns.rm(file, "home");
+  if (ns.fileExists(downloader, "home")) {
+    ns.rm(downloader, "home");
   }
 
-  const ok = await ns.wget(url, file);
+  const ok = await ns.wget(url, downloader);
 
-  if (!ok || !ns.fileExists(file, "home")) {
-    ns.tprint(`[start.js] Failed to download ${file}`);
+  if (!ok || !ns.fileExists(downloader, "home")) {
+    ns.tprint(`[start.js] Failed to download ${downloader}`);
     return;
   }
 
-  ns.tprint(`[start.js] Launching ${file}...`);
-  ns.spawn(file, 1);
+  ns.tprint(`[start.js] Launching ${downloader} -> ${nextScript}...`);
+  ns.spawn(downloader, 1, nextScript);
 }
 ```
 
@@ -51,252 +59,63 @@ export async function main(ns) {
 The normal boot path is:
 
 1. `start.js`
-2. `initHacking.js`
-3. `killAll.js`
-4. `spider.js`
-5. `overlapBatchController.js`
-6. `playerServers.js`
+2. `/bootstrap/start-download-only.js`
+3. `/bootstrap/initHacking.js`
+4. `/hacking/main/killAll.js`
+5. `/hacking/main/spider.js`
+6. `/hacking/batch/overlapBatchController.js`
+7. `/hacking/main/playerServers.js`
 
 ## Main Components
 
-### `initHacking.js`
+### `/bootstrap/initHacking.js`
 
-This is the real entry point.
+This is the real entry point after the bootstrap sync.
 
 It:
 - downloads the current script set from GitHub
 - clears old runtime state used by the hacking stack
-- starts `killAll.js` for a clean reset
-- passes default startup args into `overlapBatchController.js`
-- launches `playerServers.js`
+- starts `/hacking/main/killAll.js` for a clean reset
+- passes default startup args into `/hacking/batch/overlapBatchController.js`
+- launches `/hacking/main/playerServers.js`
 
-Default overlap startup args are:
-
-```text
-0.03 150 128
-```
-
-That means:
-- start at 3% hack target
-- start at 150 ms spacing
-- reserve 128 GB on `home`
-
-These are only starting values. The overlap controller auto-tunes from there.
-
-### `overlapBatchController.js`
+### `/hacking/batch/overlapBatchController.js`
 
 This is the primary hacking engine.
-
-It now supports:
-- auto-tuned hack percent and spacer
-- dynamic batch and job caps
-- auto-scaling based on total fleet RAM
-- prep detection with prep waves excluded from real batch counts
-- anti-thrash target locking
-- richer late-game target filtering
-- RAM-aware batch sizing
-- top-target display in the tail window
-- tuner state publishing for `playerServers.js`
 
 Normal usage is:
 
 ```text
-run overlapBatchController.js
+run /hacking/batch/overlapBatchController.js
 ```
 
-You can still override the starting point manually:
+### `/utils/setSpendMode.js`
 
-```text
-run overlapBatchController.js 0.05 100 128
-```
-
-That means:
-- start at 5% hack target
-- start at 100 ms spacing
-- reserve 128 GB on `home`
-
-The controller still auto-tunes after launch.
-
-### `playerServers.js`
-
-This script manages purchased servers and cooperates with the hacking tuner.
-
-It supports three spend modes:
-- `growth`
-- `balanced`
-- `save_for_augs`
-
-It reads the current mode from local storage so you can switch modes without editing the script.
-
-## Spend Modes
-
-Use `setSpendMode.js` to switch modes.
-
-### Growth mode
-
-Aggressively buys and upgrades purchased servers.
-
-```text
-run setSpendMode.js growth
-```
-
-### Balanced mode
-
-Moderate reinvestment.
-
-```text
-run setSpendMode.js balanced
-```
-
-### Save-for-augs mode
-
-Preserves a large reserve for augment purchases.
-
-```text
-run setSpendMode.js save_for_augs 75000000000
-```
-
-That example keeps about `75b` reserved before `playerServers.js` spends more on purchased servers.
-
-## Helper Scripts
-
-### `setSpendMode.js`
-
-Changes the saved spend mode used by `playerServers.js`.
+Changes the saved spend mode used by `/hacking/main/playerServers.js`.
 
 Examples:
 
 ```text
-run setSpendMode.js growth
-run setSpendMode.js balanced
-run setSpendMode.js save_for_augs 75000000000
+run /utils/setSpendMode.js growth
+run /utils/setSpendMode.js balanced
+run /utils/setSpendMode.js save_for_augs 75000000000
 ```
 
-### `fleetfree.js`
+## Script Groups
 
-Shows total, used, and free RAM across the full rooted fleet.
+- Bootstrapping: `/bootstrap/*`
+- Main hacking: `/hacking/main/*`
+- Batch hacking: `/hacking/batch/*`
+- XP grinding: `/xp/*`
+- Sharing: `/share/*`
+- Stock market: `/stockmarket/*`
+- Gang: `/gang/*`
+- Crime and karma: `/crime/*`
+- Utilities: `/utils/*`
+- Browser-only helpers: `/manual/browser/*`
 
-```text
-run fleetfree.js
-```
+## Notes
 
-Use this instead of `free` when you want to judge how much of the actual fleet is being used.
-
-### `stopXpGrind.js`
-
-Manual helper for stopping XP-distribution scripts.
-
-## Automated Scripts
-
-These normally should not be started by hand during normal play:
-
-- `initHacking.js`
-- `killAll.js`
-- `spider.js`
-- `overlapBatchController.js`
-- `playerServers.js`
-- `prepTarget.js`
-- `batchHack.js`
-- `batchGrow.js`
-- `batchWeaken.js`
-
-## Manual Scripts
-
-### Browser-only helpers
-
-Do not run these with `run` or `exec`.
-
-- `browserAutoHack.js`
-- `hackingMission.js`
-
-These are intended for the browser console and interact with the UI directly.
-
-### Optional manual scripts
-
-- `gangFastAscender.js`
-- `commitCrime.js`
-- `karmaReducer.js`
-- `getCrimesData.js`
-- `getCrimesData2.js`
-
-## Why Money Can Look Low
-
-If money seems stalled, it is often being reinvested into purchased servers.
-
-Use:
-
-```text
-run setSpendMode.js save_for_augs 75000000000
-```
-
-when you want to bank money for augment purchases.
-
-Use:
-
-```text
-run setSpendMode.js growth
-```
-
-when you want to scale the fleet as fast as possible.
-
-## Safety Notes
-
-### Only run one hacking controller family at a time
-
-Do not mix:
-- `mainHack.js`
-- `runHacking.js`
-- `batchController.js`
-- `overlapBatchController.js`
-
-If you want to switch controllers, run `start.js` again or kill the old controller first.
-
-### Why the game can hang
-
-The biggest risk is launching too many overlapping jobs too quickly.
-
-This repo tries to reduce that risk by:
-- using dynamic job and batch ceilings
-- using more conservative spacing when needed
-- avoiding multiple controller families running at once
-- keeping `playerServers.js` and controller state coordinated
-- excluding prep waves from real batch ceilings
-
-## Recommended Usage
-
-### Normal fresh run
-
-```text
-run start.js
-```
-
-### Direct controller run
-
-```text
-run overlapBatchController.js
-```
-
-### Scale hard
-
-```text
-run setSpendMode.js growth
-```
-
-### Save for augments
-
-```text
-run setSpendMode.js save_for_augs 75000000000
-```
-
-### Check actual fleet usage
-
-```text
-run fleetfree.js
-```
-
-## Repo Source
-
-This repo pulls files from:
-- `ctoppan/bitburner`
-
-Running `start.js` refreshes local copies from the repo, so local manual edits will be overwritten unless they are committed upstream.
+- `start.js` is still the tiny manual bootstrap you paste on `home`.
+- The maintained repo copy of that bootstrap lives at `src/bootstrap/start.js`.
+- The downloader now mirrors folder structure automatically, so files from `src/hacking/main/` land in `home/hacking/main/` in game.

@@ -1,5 +1,6 @@
 /** @param {NS} ns **/
 export async function main(ns) {
+  const nextScript = String(ns.args[0] ?? "");
   if (ns.getHostname() !== "home") {
     throw new Error("Run the script from home");
   }
@@ -84,4 +85,13 @@ export async function main(ns) {
   }
 
   ns.tprint(`[downloader] Done. Success: ${okCount}, Failed: ${failCount}`);
+
+  if (nextScript) {
+    if (ns.fileExists(nextScript, "home")) {
+      ns.tprint(`[downloader] Launching ${nextScript}...`);
+      ns.spawn(nextScript, 1);
+    } else {
+      ns.tprint(`[downloader] Skipping launch. Missing ${nextScript}`);
+    }
+  }
 }

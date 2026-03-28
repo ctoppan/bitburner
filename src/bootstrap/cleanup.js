@@ -1,17 +1,17 @@
 /** @param {NS} ns **/
 export async function main(ns) {
   const keep = new Set([
-    "cleanup.js",
-	"start-download-only.js",
+    "bootstrap/cleanup.js",
+    "bootstrap/start-download-only.js",
   ]);
 
-  // Kill everything else on home first
+  const normalize = (name) => String(name || "").replace(/^\/+/, "");
+
   for (const proc of ns.ps("home")) {
-    if (keep.has(proc.filename)) continue;
+    if (keep.has(normalize(proc.filename))) continue;
     ns.kill(proc.pid);
   }
 
-  // Give the kills a moment to settle
   await ns.sleep(200);
 
   const files = ns.ls("home", ".js");
@@ -19,7 +19,7 @@ export async function main(ns) {
   let failed = 0;
 
   for (const file of files) {
-    if (keep.has(file)) continue;
+    if (keep.has(normalize(file))) continue;
 
     const ok = ns.rm(file, "home");
     if (ok) {

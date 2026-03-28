@@ -5,7 +5,7 @@ export async function main(ns) {
   const requestedTarget = String(ns.args[0] ?? "");
   const homeReserve = Math.max(16, Number(ns.args[1] ?? 64));
   const includeHome = String(ns.args[2] ?? "true").toLowerCase() !== "false";
-  const worker = "xpGrind.js";
+  const worker = "/xp/xpGrind.js";
 
   if (!ns.fileExists(worker, "home")) {
     ns.tprint(`Missing ${worker} on home`);

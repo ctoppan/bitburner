@@ -1,4 +1,4 @@
-import { settings, setItem } from "common.js";
+import { settings, setItem } from "/utils/common.js";
 
 const hackPrograms = ["BruteSSH.exe", "FTPCrack.exe", "relaySMTP.exe", "HTTPWorm.exe", "SQLInject.exe"];
 
@@ -171,7 +171,7 @@ export async function main(ns) {
 
   if (!scriptToRunAfter) {
     ns.tprint(`[${localeHHMMSS()}] Spawning mainHack.js`);
-    ns.spawn("mainHack.js", 1);
+    ns.spawn("/hacking/main/mainHack.js", 1);
   } else {
     ns.tprint(
       `[${localeHHMMSS()}] Spawning ${scriptToRunAfter}${scriptArgs.length ? ` ${scriptArgs.join(" ")}` : ""}`

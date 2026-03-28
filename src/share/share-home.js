@@ -1,6 +1,6 @@
 /** @param {NS} ns **/
 export async function main(ns) {
-  const worker = "share-worker.js";
+  const worker = "/share/share-worker.js";
   const reserve = 32; // leave some RAM so you don't lock yourself out
 
   const scriptRam = ns.getScriptRam(worker);
