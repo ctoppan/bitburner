@@ -1,7 +1,7 @@
 # Bitburner Automation Repo
 
-This repo is designed to keep your **home server clean and disposable**
-while all real scripts live in GitHub.
+This repo keeps your **home server clean and disposable** while all real
+scripts live in GitHub.
 
 You only keep a tiny bootstrap locally. Everything else syncs from
 GitHub.
@@ -10,17 +10,17 @@ GitHub.
 
 ## 🚀 Quick Start (Fresh Game or Reset)
 
-Paste this into the terminal:
+Create the one-time installer:
 
-    nano start.js
+    nano installscripts.js
 
-Then paste:
+Paste:
 
 ``` js
 /** @param {NS} ns **/
 export async function main(ns) {
-  const url = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src/bootstrap/start-download-only.js";
-  const file = "bootstrap/start-download-only.js";
+  const url = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src/bootstrap/start.js";
+  const file = "bootstrap/start.js";
 
   await ns.wget(`${url}?ts=${Date.now()}`, file);
   ns.spawn(file, 1);
@@ -29,35 +29,34 @@ export async function main(ns) {
 
 Run:
 
-    run start.js
+    run installscripts.js
 
 ------------------------------------------------------------------------
 
 ## 🔄 What Happens
 
-`start.js` does:
+### Step 1: installscripts.js
 
-1.  downloads `bootstrap/start-download-only.js`
-2.  runs it
-3.  that script pulls your entire repo from GitHub
-4.  then launches:
+-   Downloads `bootstrap/start.js`
+-   Runs it
 
-```{=html}
-<!-- -->
-```
-    bootstrap/initHacking.js
+### Step 2: bootstrap/start.js
+
+-   Downloads `bootstrap/start-download-only.js`
+-   Runs it
+-   Passes `/bootstrap/initHacking.js` as the next script
+
+### Step 3: start-download-only.js
+
+-   Syncs the entire repo from GitHub
+-   Launches `/bootstrap/initHacking.js`
 
 ------------------------------------------------------------------------
 
 ## 🧹 Clean Reset
 
-Wipe all scripts on home (except cleanup):
-
     run bootstrap/cleanup.js
-
-Then re-sync:
-
-    run start.js
+    run installscripts.js
 
 ------------------------------------------------------------------------
 
@@ -78,28 +77,28 @@ Then re-sync:
 
 ## ▶️ Common Commands
 
-### Start everything
+Start everything:
 
-    run start.js
+    run installscripts.js
 
-### Clean and resync
+Clean and resync:
 
     run bootstrap/cleanup.js
-    run start.js
+    run installscripts.js
 
-### Run spread hacking manually
+Spread hacking:
 
     run hacking/main/spread-hack.js
 
-### Check network status
+Network status:
 
     run utils/network-status.js
 
-### Run XP grinding
+XP grinding:
 
     run xp/xpGrind.js
 
-### Run share scripts
+Share scripts:
 
     run share/share-home.js
 
@@ -116,22 +115,12 @@ Then re-sync:
 
 ## 🔧 Tips
 
-Always use full paths in scripts:
+Always use full paths:
 
 ``` js
 ns.exec("/hacking/main/hack.js", host, threads);
 ```
 
-If something breaks after reorganizing, it is almost always a path
-issue.
+If something breaks, it is almost always a path issue.
 
 You can safely wipe and re-download at any time.
-
-------------------------------------------------------------------------
-
-## 🔮 Future Upgrades (optional)
-
--   smart sync (only changed files)
--   auto-root + deploy pipeline
--   multi-target batching
--   dynamic server allocation
