@@ -20,22 +20,21 @@ export async function main(ns) {
   const weakenScript = "/hacking/batch/batchWeaken.js";
 
   const workerScripts = [hackScript, growScript, weakenScript];
-  const workerRam = Math.max(
-    ns.getScriptRam(hackScript, "home"),
-    ns.getScriptRam(growScript, "home"),
-    ns.getScriptRam(weakenScript, "home"),
-  );
 
-  if (workerRam <= 0) {
-    ns.tprint("[overlap] ERROR: Batch worker scripts missing or invalid.");
-    return;
+  for (const script of workerScripts) {
+    if (!ns.fileExists(script, "home")) {
+      ns.tprint(`[overlap] ERROR: Missing ${script} on home`);
+      return;
+    }
   }
 
   while (true) {
     try {
       const hosts = getUsableHosts(ns, homeReserveGb);
-      const target = chooseBestTarget(ns, targetWindow);
 
+      await syncWorkersToHosts(ns, hosts, workerScripts);
+
+      const target = chooseBestTarget(ns, targetWindow);
       if (!target) {
         ns.print("[overlap] No valid target found. Sleeping 10s.");
         await ns.sleep(10000);
@@ -50,11 +49,13 @@ export async function main(ns) {
       const prepNeeded = moneyNow < maxMoney * 0.95 || secNow > minSec + 1;
 
       if (prepNeeded) {
+        ns.clearLog();
         ns.print(
           `[overlap] Prep needed for ${target}. money=${formatMoney(ns, moneyNow)}/${formatMoney(ns, maxMoney)} sec=${secNow.toFixed(2)}/${minSec.toFixed(2)}`
         );
-        await runPrepCycle(ns, hosts, target, weakenScript, growScript);
-        await ns.sleep(200);
+
+        const waitMs = await runPrepCycle(ns, hosts, target, weakenScript, growScript);
+        await ns.sleep(waitMs);
         continue;
       }
 
@@ -62,9 +63,9 @@ export async function main(ns) {
       const growTime = ns.getGrowTime(target);
       const hackTime = ns.getHackTime(target);
 
-      if (spacingMs < 0) {
-        spacingMs = Math.max(20, Math.ceil(weakenTime / 200));
-      }
+      const effectiveSpacing = spacingMs < 0
+        ? Math.max(20, Math.ceil(weakenTime / 200))
+        : spacingMs;
 
       const hackPctPerThread = ns.hackAnalyze(target);
       if (hackPctPerThread <= 0) {
@@ -91,7 +92,7 @@ export async function main(ns) {
       const totalFreeRam = hosts.reduce((sum, h) => sum + h.freeRam, 0);
       const maxConcurrentBatches = Math.max(1, Math.floor(totalFreeRam / ramPerBatch));
 
-      const cycleLength = spacingMs * 4;
+      const cycleLength = effectiveSpacing * 4;
       const theoreticalMax = Math.max(1, Math.floor(weakenTime / cycleLength));
       const concurrentBatches = Math.max(1, Math.min(maxConcurrentBatches, theoreticalMax));
 
@@ -100,7 +101,7 @@ export async function main(ns) {
       ns.print(`[overlap] Hack pct requested: ${pct(desiredHackPct)} | actual: ${pct(actualHackPct)}`);
       ns.print(`[overlap] Threads H:${hackThreads} G:${growThreads} W1:${weakenHackThreads} W2:${weakenGrowThreads}`);
       ns.print(`[overlap] Hosts: ${hosts.length} | Free RAM: ${formatRam(totalFreeRam)} | Batch RAM: ${formatRam(ramPerBatch)}`);
-      ns.print(`[overlap] Concurrent batches: ${concurrentBatches} | spacing=${spacingMs}ms`);
+      ns.print(`[overlap] Concurrent batches: ${concurrentBatches} | spacing=${effectiveSpacing}ms`);
 
       killExistingBatchWorkers(ns, hosts, workerScripts);
 
@@ -109,9 +110,9 @@ export async function main(ns) {
         const baseDelay = i * cycleLength;
 
         const weaken1Delay = baseDelay;
-        const hackDelay = Math.max(0, baseDelay + weakenTime - hackTime - spacingMs * 2);
-        const growDelay = Math.max(0, baseDelay + weakenTime - growTime - spacingMs);
-        const weaken2Delay = baseDelay + spacingMs * 3;
+        const hackDelay = Math.max(0, baseDelay + weakenTime - hackTime - effectiveSpacing * 2);
+        const growDelay = Math.max(0, baseDelay + weakenTime - growTime - effectiveSpacing);
+        const weaken2Delay = baseDelay + effectiveSpacing * 3;
 
         if (!dispatch(ns, hosts, weakenScript, weakenHackThreads, target, weaken1Delay, `w1-${batchId}`)) break;
         if (!dispatch(ns, hosts, hackScript, hackThreads, target, hackDelay, `h-${batchId}`)) break;
@@ -126,6 +127,15 @@ export async function main(ns) {
       ns.tprint(`[overlap] ERROR: ${String(err)}`);
       await ns.sleep(5000);
     }
+  }
+}
+
+async function syncWorkersToHosts(ns, hosts, workerScripts) {
+  for (const h of hosts) {
+    if (h.host === "home") continue;
+    try {
+      await ns.scp(workerScripts, h.host, "home");
+    } catch {}
   }
 }
 
@@ -203,25 +213,24 @@ async function runPrepCycle(ns, hosts, target, weakenScript, growScript) {
 
   let weakenThreads = 0;
   let growThreads = 0;
+  let waitMs = 2000;
 
   if (sec > minSec + 1) {
     weakenThreads = Math.ceil((sec - minSec) / 0.05);
+    dispatch(ns, hosts, weakenScript, weakenThreads, target, 0, "prep-w");
+    waitMs = Math.ceil(ns.getWeakenTime(target) + 250);
   } else if (money < maxMoney * 0.95) {
     const ratio = maxMoney / Math.max(1, money);
     growThreads = Math.ceil(ns.growthAnalyze(target, ratio));
     weakenThreads = Math.ceil((growThreads * 0.004) / 0.05);
-  }
 
-  if (weakenThreads <= 0 && growThreads <= 0) return;
-
-  if (weakenThreads > 0) {
-    dispatch(ns, hosts, weakenScript, weakenThreads, target, 0, "prep-w");
-  }
-  if (growThreads > 0) {
     dispatch(ns, hosts, growScript, growThreads, target, 0, "prep-g");
+    dispatch(ns, hosts, weakenScript, weakenThreads, target, 0, "prep-w");
+
+    waitMs = Math.ceil(Math.max(ns.getGrowTime(target), ns.getWeakenTime(target)) + 250);
   }
 
-  await ns.sleep(1000);
+  return waitMs;
 }
 
 function dispatch(ns, hosts, script, totalThreads, target, delay, tag) {
