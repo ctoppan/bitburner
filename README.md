@@ -1,121 +1,137 @@
-# Bitburner Automation Starter
+# Bitburner Automation Repo
 
-This repo is an opinionated Bitburner automation stack built around a tiny bootstrap, a full-repo downloader, an auto-tuning overlap batch controller, purchased-server scaling, and a money-vs-growth spending toggle.
+This repo is designed to keep your **home server clean and disposable**
+while all real scripts live in GitHub.
 
-## Folder Layout
+You only keep a tiny bootstrap locally. Everything else syncs from
+GitHub.
 
-```text
-src/
-  bootstrap/
-  hacking/main/
-  hacking/batch/
-  xp/
-  share/
-  stockmarket/
-  gang/
-  crime/
-  utils/
-  manual/browser/
-```
+------------------------------------------------------------------------
 
-## Quick Start
+## 🚀 Quick Start (Fresh Game or Reset)
 
-1. Create a fresh `start.js` on `home`.
-2. Paste in the bootstrap below.
-3. Run `run start.js`.
+Paste this into the terminal:
 
-```javascript
+    nano start.js
+
+Then paste:
+
+``` js
 /** @param {NS} ns **/
 export async function main(ns) {
-  if (ns.getHostname() !== "home") {
-    throw new Error("Run the script from home");
-  }
+  const url = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src/bootstrap/start-download-only.js";
+  const file = "bootstrap/start-download-only.js";
 
-  const repoBase = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src";
-  const downloader = "bootstrap/start-download-only.js";
-  const nextScript = "/bootstrap/initHacking.js";
-  const url = `${repoBase}/${downloader}?ts=${Date.now()}`;
-
-  ns.tprint(`[start.js] Refreshing ${downloader}...`);
-
-  if (ns.fileExists(downloader, "home")) {
-    ns.rm(downloader, "home");
-  }
-
-  const ok = await ns.wget(url, downloader);
-
-  if (!ok || !ns.fileExists(downloader, "home")) {
-    ns.tprint(`[start.js] Failed to download ${downloader}`);
-    return;
-  }
-
-  ns.tprint(`[start.js] Launching ${downloader} -> ${nextScript}...`);
-  ns.spawn(downloader, 1, nextScript);
+  await ns.wget(`${url}?ts=${Date.now()}`, file);
+  ns.spawn(file, 1);
 }
 ```
 
-## Runtime Flow
+Run:
 
-The normal boot path is:
+    run start.js
 
-1. `start.js`
-2. `/bootstrap/start-download-only.js`
-3. `/bootstrap/initHacking.js`
-4. `/hacking/main/killAll.js`
-5. `/hacking/main/spider.js`
-6. `/hacking/batch/overlapBatchController.js`
-7. `/hacking/main/playerServers.js`
+------------------------------------------------------------------------
 
-## Main Components
+## 🔄 What Happens
 
-### `/bootstrap/initHacking.js`
+`start.js` does:
 
-This is the real entry point after the bootstrap sync.
+1.  downloads `bootstrap/start-download-only.js`
+2.  runs it
+3.  that script pulls your entire repo from GitHub
+4.  then launches:
 
-It:
-- downloads the current script set from GitHub
-- clears old runtime state used by the hacking stack
-- starts `/hacking/main/killAll.js` for a clean reset
-- passes default startup args into `/hacking/batch/overlapBatchController.js`
-- launches `/hacking/main/playerServers.js`
+```{=html}
+<!-- -->
+```
+    bootstrap/initHacking.js
 
-### `/hacking/batch/overlapBatchController.js`
+------------------------------------------------------------------------
 
-This is the primary hacking engine.
+## 🧹 Clean Reset
 
-Normal usage is:
+Wipe all scripts on home (except cleanup):
 
-```text
-run /hacking/batch/overlapBatchController.js
+    run bootstrap/cleanup.js
+
+Then re-sync:
+
+    run start.js
+
+------------------------------------------------------------------------
+
+## 📁 Folder Structure
+
+    /bootstrap/        → startup, downloader, cleanup
+    /hacking/main/     → core hacking logic
+    /hacking/batch/    → batch scripts (HWGW)
+    /xp/               → XP grinding scripts
+    /share/            → faction rep sharing
+    /stockmarket/      → stock trading
+    /gang/             → gang automation
+    /crime/            → crime scripts
+    /utils/            → helpers (scan, root, etc)
+    /manual/browser/   → browser/manual helpers
+
+------------------------------------------------------------------------
+
+## ▶️ Common Commands
+
+### Start everything
+
+    run start.js
+
+### Clean and resync
+
+    run bootstrap/cleanup.js
+    run start.js
+
+### Run spread hacking manually
+
+    run hacking/main/spread-hack.js
+
+### Check network status
+
+    run utils/network-status.js
+
+### Run XP grinding
+
+    run xp/xpGrind.js
+
+### Run share scripts
+
+    run share/share-home.js
+
+------------------------------------------------------------------------
+
+## 💡 Philosophy
+
+-   home is temporary
+-   GitHub is the source of truth
+-   scripts are grouped by purpose
+-   everything is modular and scalable
+
+------------------------------------------------------------------------
+
+## 🔧 Tips
+
+Always use full paths in scripts:
+
+``` js
+ns.exec("/hacking/main/hack.js", host, threads);
 ```
 
-### `/utils/setSpendMode.js`
+If something breaks after reorganizing, it is almost always a path
+issue.
 
-Changes the saved spend mode used by `/hacking/main/playerServers.js`.
+You can safely wipe and re-download at any time.
 
-Examples:
+------------------------------------------------------------------------
 
-```text
-run /utils/setSpendMode.js growth
-run /utils/setSpendMode.js balanced
-run /utils/setSpendMode.js save_for_augs 75000000000
-```
+## 🔮 Future Upgrades (optional)
 
-## Script Groups
-
-- Bootstrapping: `/bootstrap/*`
-- Main hacking: `/hacking/main/*`
-- Batch hacking: `/hacking/batch/*`
-- XP grinding: `/xp/*`
-- Sharing: `/share/*`
-- Stock market: `/stockmarket/*`
-- Gang: `/gang/*`
-- Crime and karma: `/crime/*`
-- Utilities: `/utils/*`
-- Browser-only helpers: `/manual/browser/*`
-
-## Notes
-
-- `start.js` is still the tiny manual bootstrap you paste on `home`.
-- The maintained repo copy of that bootstrap lives at `src/bootstrap/start.js`.
-- The downloader now mirrors folder structure automatically, so files from `src/hacking/main/` land in `home/hacking/main/` in game.
+-   smart sync (only changed files)
+-   auto-root + deploy pipeline
+-   multi-target batching
+-   dynamic server allocation
