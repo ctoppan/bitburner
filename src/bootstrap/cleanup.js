@@ -1,12 +1,14 @@
 /** @param {NS} ns **/
 export async function main(ns) {
+  const self = ns.getScriptName();
+
   const keep = new Set([
-    "cleanup.js",
     "start.js",
     "bootstrap/start-download-only.js",
+    self,
   ]);
 
-  // Kill everything except kept scripts
+  // Kill running scripts on home except protected bootstrap files
   for (const proc of ns.ps("home")) {
     if (keep.has(proc.filename)) continue;
     ns.kill(proc.pid);
@@ -15,15 +17,20 @@ export async function main(ns) {
   await ns.sleep(200);
 
   let removed = 0;
+  let failed = 0;
 
   for (const file of ns.ls("home", ".js")) {
     if (keep.has(file)) continue;
 
-    if (ns.rm(file, "home")) {
+    const ok = ns.rm(file, "home");
+    if (ok) {
       removed++;
       ns.tprint(`[cleanup] removed ${file}`);
+    } else {
+      failed++;
+      ns.tprint(`[cleanup] failed ${file}`);
     }
   }
 
-  ns.tprint(`[cleanup] done | removed=${removed}`);
+  ns.tprint(`[cleanup] done | removed=${removed} failed=${failed}`);
 }
