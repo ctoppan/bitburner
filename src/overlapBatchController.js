@@ -19,6 +19,7 @@ export async function main(ns) {
         lastTarget: "",
         lastTargetScore: 0,
         lastTargetSwitchAt: 0,
+        lastHomeTrimNote: "none",
     };
 
     const TUNER_KEY = "bb_tuner_state_v8";
@@ -34,6 +35,9 @@ export async function main(ns) {
             const workers = rooted.filter(s => ns.getServerMaxRam(s) > 0);
 
             state.effectiveHomeReserveGb = resolveHomeReserveGb(ns, state.homeReserveGb);
+
+            state.lastHomeTrimNote = enforceHomeReserve(ns, state.effectiveHomeReserveGb);
+
             const fleet = getFleetRam(ns, workers, state.effectiveHomeReserveGb);
             state.fastStart = isFastStart(ns, fleet);
 
@@ -79,6 +83,7 @@ export async function main(ns) {
                 hackPct: state.hackPct,
                 spacer: state.spacer,
                 activeTargets: activeTargetPool.map(t => t.target),
+                homeTrimNote: state.lastHomeTrimNote,
             });
 
             if (state.lastTarget !== primaryTarget) {
@@ -126,6 +131,8 @@ export async function main(ns) {
                 launchedThisLoop++;
             }
 
+            state.lastHomeTrimNote = enforceHomeReserve(ns, state.effectiveHomeReserveGb);
+
             const liveFleet = getFleetRam(ns, workers, state.effectiveHomeReserveGb);
             const liveActiveJobs = countActiveBatchJobs(ns, rooted);
             const liveActiveBatches = countActiveBatches(ns, rooted).total;
@@ -156,26 +163,11 @@ export async function main(ns) {
 }
 
 function parseArgs(args) {
-    const hackPct = Number(args[0] ?? 0.03);
-
-    // Legacy style:
-    // [hackPct, maxBatches, homeReserveGb, spacer]
-    if (args.length >= 3 && Number(args[1]) > 64) {
-        return {
-            hackPct,
-            maxBatches: Math.max(512, Math.trunc(Number(args[1]) || 1024)),
-            homeReserveGb: Number.isFinite(Number(args[2])) ? Number(args[2]) : -1,
-            spacer: Math.max(20, Math.trunc(Number(args[3]) || 30)),
-        };
-    }
-
-    // Modern style:
-    // [hackPct, homeReserveGb, maxBatches, spacer]
     return {
-        hackPct,
-        homeReserveGb: Number.isFinite(Number(args[1])) ? Number(args[1]) : -1,
-        maxBatches: Math.max(512, Math.trunc(Number(args[2]) || 1024)),
-        spacer: Math.max(20, Math.trunc(Number(args[3]) || 30)),
+        hackPct: Number(args[0] ?? 0.03),
+        spacer: Math.max(20, Math.trunc(Number(args[1]) || 30)),
+        homeReserveGb: Number.isFinite(Number(args[2])) ? Number(args[2]) : -1,
+        maxBatches: 1024,
     };
 }
 
@@ -439,6 +431,52 @@ function launchDistributed(ns, workers, script, threads, args, homeReserveGb) {
     return remaining < threads;
 }
 
+function enforceHomeReserve(ns, homeReserveGb) {
+    const maxRam = ns.getServerMaxRam("home");
+    const allowedUsed = Math.max(0, maxRam - homeReserveGb);
+    let usedRam = ns.getServerUsedRam("home");
+
+    if (usedRam <= allowedUsed) return "ok";
+
+    const workers = ns.ps("home")
+        .filter(p => ["batchHack.js", "batchGrow.js", "batchWeaken.js"].includes(p.filename))
+        .map(p => ({
+            pid: p.pid,
+            filename: p.filename,
+            threads: p.threads,
+            ram: p.threads * ns.getScriptRam(p.filename, "home"),
+            args: p.args || [],
+        }))
+        .sort((a, b) => b.pid - a.pid);
+
+    if (workers.length === 0) {
+        const overflow = Math.max(0, usedRam - allowedUsed);
+        return `overflow:${overflow.toFixed(1)}GB no-home-batch-workers`;
+    }
+
+    let killed = 0;
+    let freed = 0;
+
+    for (const proc of workers) {
+        usedRam = ns.getServerUsedRam("home");
+        if (usedRam <= allowedUsed) break;
+
+        if (ns.kill(proc.pid)) {
+            killed++;
+            freed += proc.ram;
+        }
+    }
+
+    const finalUsed = ns.getServerUsedRam("home");
+    const remainingOverflow = Math.max(0, finalUsed - allowedUsed);
+
+    if (remainingOverflow > 0) {
+        return `trimmed:${killed} freed:${freed.toFixed(1)}GB still_over:${remainingOverflow.toFixed(1)}GB`;
+    }
+
+    return `trimmed:${killed} freed:${freed.toFixed(1)}GB`;
+}
+
 function getRootedServers(ns) {
     const discovered = new Set(["home"]);
     const queue = ["home"];
@@ -694,6 +732,7 @@ function buildSummary(ns, state, fleet, target, targetScore, targetInfo, activeJ
         `jobs:${activeJobs}/${state.maxJobs} batches:${activeBatches}/${state.maxBatches}`,
         `Tune: auto hpct:${(state.hackPct * 100).toFixed(2)} spacer:${state.spacer} maxB:${state.maxBatches}`,
         `Home reserve: ${state.effectiveHomeReserveGb.toFixed(0)}GB fastStart:${state.fastStart ? "on" : "off"}`,
+        `Home trim: ${state.lastHomeTrimNote}`,
         `Invest: ${state.invest}`,
         `Tune note: ${state.tuneNote}`,
         `Action: ${lastAction}`,
