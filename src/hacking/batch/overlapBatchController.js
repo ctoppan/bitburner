@@ -20,6 +20,7 @@ export async function main(ns) {
     maxPrepWavesBeforeDowngrade: 4,
     minFleetFreeForBatchGb: 24,
     xpScript: "/xp/xpGrind.js",
+    xpDistributor: "/xp/xpDistributor.js",
   };
 
   const hackScript = "/hacking/batch/batchHack.js";
@@ -51,7 +52,7 @@ export async function main(ns) {
       const prepable = candidateInfos.filter(t => t.maxMoney > 0);
 
       if (batchable.length > 0 && fleetFreeRam >= CFG.minFleetFreeForBatchGb) {
-        stopXpMode(ns, CFG.xpScript);
+        stopXpMode(ns, CFG.xpScript, CFG.xpDistributor);
 
         const chosen = chooseBatchTarget(batchable, prepWaveCounts, CFG);
         const spacingMs = CFG.defaultSpacing < 0
@@ -74,7 +75,7 @@ export async function main(ns) {
       const prepTargets = choosePrepTargets(prepable, prepWaveCounts, CFG, fleetFreeRam);
 
       if (prepTargets.length > 0) {
-        stopXpMode(ns, CFG.xpScript);
+        stopXpMode(ns, CFG.xpScript, CFG.xpDistributor);
 
         if (lastMode !== "PREP" || lastTarget !== prepTargets.map(t => t.host).join(",")) {
           ns.tprint(`[overlap] PREP mode -> ${prepTargets.map(t => t.host).join(", ")}`);
@@ -105,7 +106,7 @@ export async function main(ns) {
       ns.clearLog();
       ns.print(`[overlap] XP mode`);
       ns.print(`[overlap] No batchable or worthwhile prep targets right now.`);
-      startXpMode(ns, CFG.xpScript);
+      startXpMode(ns, CFG.xpScript, CFG.xpDistributor);
       await ns.sleep(15000);
     } catch (err) {
       ns.tprint(`[overlap] ERROR: ${String(err)}`);
@@ -439,14 +440,24 @@ function killExistingBatchWorkers(ns, hosts, workerScripts) {
   }
 }
 
-function startXpMode(ns, xpScript) {
-  if (!ns.fileExists(xpScript, "home")) return;
-  if (!ns.isRunning(xpScript, "home")) {
-    ns.run(xpScript, 1);
+function startXpMode(ns, xpScript, xpDistributor) {
+  if (!ns.fileExists(xpDistributor, "home")) return;
+
+  if (ns.isRunning(xpDistributor, "home")) return;
+
+  if (ns.isRunning(xpScript, "home")) {
+    ns.kill(xpScript, "home");
   }
+
+  ns.tprint("[overlap] Starting XP distributor...");
+  ns.run(xpDistributor, 1);
 }
 
-function stopXpMode(ns, xpScript) {
+function stopXpMode(ns, xpScript, xpDistributor) {
+  if (ns.isRunning(xpDistributor, "home")) {
+    ns.kill(xpDistributor, "home");
+  }
+
   if (ns.isRunning(xpScript, "home")) {
     ns.kill(xpScript, "home");
   }
