@@ -1,19 +1,22 @@
-/** @param {NS} ns **/
+/** @param {NS} ns */
 export async function main(ns) {
-  const target = String(ns.args[0] ?? "n00dles");
+  const target = String(ns.args[0] || "n00dles")
+  const retryMs = 1000
+
+  ns.disableLog("sleep")
+  ns.disableLog("hasRootAccess")
 
   while (true) {
-    const money = ns.getServerMoneyAvailable(target);
-    const maxMoney = ns.getServerMaxMoney(target);
-    const sec = ns.getServerSecurityLevel(target);
-    const minSec = ns.getServerMinSecurityLevel(target);
+    while (!ns.hasRootAccess(target)) {
+      ns.print(`[xpGrind] Waiting for root access on ${target}...`)
+      await ns.sleep(retryMs)
+    }
 
-    if (sec > minSec + 1.5) {
-      await ns.weaken(target);
-    } else if (maxMoney > 0 && money < maxMoney * 0.9) {
-      await ns.grow(target);
-    } else {
-      await ns.weaken(target);
+    try {
+      await ns.grow(target)
+    } catch (err) {
+      ns.print(`[xpGrind] grow failed on ${target}: ${String(err)}`)
+      await ns.sleep(retryMs)
     }
   }
 }

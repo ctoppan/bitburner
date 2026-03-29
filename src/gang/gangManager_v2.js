@@ -1,7 +1,7 @@
 /** @param {NS} ns **/
 export async function main(ns) {
-    const reserve = ns.args[0] ?? 500_000_000;
-    const mode = String(ns.args[1] ?? "balanced").toLowerCase();
+    const reserve = Number(ns.args[0] ?? 100_000_000);
+    const mode = String(ns.args[1] ?? "money").toLowerCase();
 
     const earlyGear = [
         "Baseball Bat",
@@ -44,7 +44,7 @@ export async function main(ns) {
         if (!ns.gang.inGang()) return;
 
         while (ns.gang.canRecruitMember()) {
-            const name = "G" + Math.floor(Math.random() * 10000);
+            const name = makeMemberName(ns);
             ns.gang.recruitMember(name);
         }
 
@@ -53,8 +53,8 @@ export async function main(ns) {
         const homeMoney = ns.getServerMoneyAvailable("home");
 
         if (homeMoney > reserve) buyGearTier(ns, members, earlyGear);
-        if (homeMoney > reserve * 2) buyGearTier(ns, members, midGear);
-        if (homeMoney > reserve * 4) buyGearTier(ns, members, lateGear);
+        if (homeMoney > reserve * 1.75) buyGearTier(ns, members, midGear);
+        if (homeMoney > reserve * 3.0) buyGearTier(ns, members, lateGear);
 
         const settings = getModeSettings(mode, members.length, gangInfo.respect);
 
@@ -91,7 +91,7 @@ export async function main(ns) {
         }
 
         const workers = assignable.slice(vigilantesNeeded);
-        const respectMode = members.length < 12 || gangInfo.respect < settings.respectTarget;
+        const respectMode = members.length < 10 || gangInfo.respect < settings.respectTarget;
 
         for (let i = 0; i < workers.length; i++) {
             const { name, info } = workers[i];
@@ -103,7 +103,7 @@ export async function main(ns) {
                 useRespectTask = i >= Math.floor(workers.length * settings.moneyWorkerShare);
             }
 
-            const task = pickBestTaskByStats(
+            let task = pickBestTaskByStats(
                 ns,
                 info,
                 useRespectTask ? respectTasks : moneyTasks,
@@ -115,6 +115,11 @@ export async function main(ns) {
                     weakPenalty: settings.weakPenalty,
                 }
             );
+
+            // Anti-stall fallback for weak early members
+            if (combatScore(info) < 220) {
+                task = respectMode ? "Strongarm Civilians" : "Mug People";
+            }
 
             ns.gang.setMemberTask(name, task);
 
@@ -140,8 +145,8 @@ function getModeSettings(mode, memberCount, respect) {
     switch (mode) {
         case "safe":
             return {
-                trainStat: 200,
-                respectTarget: 2_000_000,
+                trainStat: 175,
+                respectTarget: 1_500_000,
                 moneyWorkerShare: 0.60,
                 moneyWeight: 0.75,
                 respectWeight: 0.90,
@@ -153,41 +158,52 @@ function getModeSettings(mode, memberCount, respect) {
                 penalty3: 0.89,
             };
 
-        case "money":
+        case "balanced":
             return {
                 trainStat: 125,
                 respectTarget: 750_000,
-                moneyWorkerShare: 0.85,
-                moneyWeight: 1.20,
-                respectWeight: 0.25,
-                wantedWeight: 1.10,
-                weakPenalty: 0.90,
-                ascThreshold: 1.18,
-                penalty1: 0.92,
-                penalty2: 0.88,
-                penalty3: 0.84,
-            };
-
-        case "balanced":
-        default:
-            return {
-                trainStat: 150,
-                respectTarget: 1_000_000,
-                moneyWorkerShare: 0.75,
+                moneyWorkerShare: 0.78,
                 moneyWeight: 1.00,
-                respectWeight: 0.45,
-                wantedWeight: 1.50,
-                weakPenalty: 0.85,
+                respectWeight: 0.40,
+                wantedWeight: 1.40,
+                weakPenalty: 0.88,
                 ascThreshold: 1.15,
                 penalty1: 0.95,
                 penalty2: 0.90,
                 penalty3: 0.85,
+            };
+
+        case "money":
+        default:
+            return {
+                trainStat: 90,
+                respectTarget: 350_000,
+                moneyWorkerShare: 0.90,
+                moneyWeight: 1.30,
+                respectWeight: 0.18,
+                wantedWeight: 0.95,
+                weakPenalty: 0.97,
+                ascThreshold: 1.14,
+                penalty1: 0.90,
+                penalty2: 0.86,
+                penalty3: 0.82,
             };
     }
 }
 
 function combatScore(info) {
     return info.str + info.def + info.dex + info.agi;
+}
+
+function makeMemberName(ns) {
+    const base = "G";
+    let tries = 0;
+    while (tries < 50) {
+        const name = base + Math.floor(Math.random() * 100000);
+        if (!ns.gang.getMemberNames().includes(name)) return name;
+        tries++;
+    }
+    return base + Date.now();
 }
 
 function buyGearTier(ns, members, gearList) {
@@ -218,11 +234,11 @@ function pickBestTaskByStats(ns, memberInfo, taskList, cfg) {
 
         let score =
             statPower +
-            (t.baseMoney * (cfg.favorRespect ? 0.35 : cfg.moneyWeight)) +
+            (t.baseMoney * (cfg.favorRespect ? 0.30 : cfg.moneyWeight)) +
             (t.baseRespect * (cfg.favorRespect ? 1.00 : cfg.respectWeight)) -
             (t.baseWanted * cfg.wantedWeight);
 
-        const weak = memberInfo.str < 400 || memberInfo.def < 400;
+        const weak = memberInfo.str < 300 || memberInfo.def < 300;
         if (weak && (task === "Human Trafficking" || task === "Terrorism")) {
             score *= cfg.weakPenalty;
         }
