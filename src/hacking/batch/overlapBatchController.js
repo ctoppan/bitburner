@@ -3,9 +3,9 @@ export async function main(ns) {
   ns.disableLog("ALL");
   ns.clearLog();
   try {
-    ns.tail();
-    ns.resizeTail(620, 420);
-    ns.moveTail(900, 80);
+    ns.ui.openTail();
+    ns.ui.resizeTail(620, 420);
+    ns.ui.moveTail(900, 80);
   } catch {}
 
   const CFG = {
