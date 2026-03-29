@@ -12,7 +12,7 @@ const scriptsToKillOnHome = [
   "/hacking/batch/batchWeaken.js",
   "/hacking/batch/batchController.js",
   "/hacking/batch/overlapBatchController.js",
-  "/hacking/main/backdoorHelper.js",
+  "/utils/backdoorHelper.js",
   "/xp/xpGrind.js",
   "/xp/xpDistributor.js",
   "/xp/stopXpGrind.js",

@@ -22,7 +22,7 @@ export async function main(ns) {
     await ns.run('/hacking/main/spider.js', 1, '/hacking/main/mainHack.js')
     await ns.sleep(3000)
     ns.tprint(`[${localeHHMMSS()}] Spawning playerServers.js`)
-    ns.spawn('/hacking/main/playerServers.js', 1)
+    ns.spawn('/hacking/playerServers.js', 1)
   } else {
     ns.tprint(`[${localeHHMMSS()}] Spawning spider.js`)
     ns.spawn('/hacking/main/spider.js', 1, '/hacking/main/mainHack.js')
