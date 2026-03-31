@@ -15,7 +15,9 @@ function getItem(key) {
 }
 
 function localeHHMMSS(ms = 0) {
-  if (!ms) ms = Date.now()
+  if (!ms) {
+    ms = Date.now()
+  }
   return new Date(ms).toLocaleTimeString()
 }
 
@@ -108,6 +110,7 @@ const codingContractTypesMetadata = [
         }
         if (++l > r) break
       }
+
       return spiral
     },
   },
@@ -216,7 +219,10 @@ const codingContractTypesMetadata = [
       const k = data[0]
       const prices = data[1]
       const len = prices.length
-      if (len < 2) return 0
+
+      if (len < 2) {
+        return 0
+      }
 
       if (k > len / 2) {
         let res = 0
@@ -243,6 +249,7 @@ const codingContractTypesMetadata = [
           hold[j] = Math.max(hold[j], rele[j - 1] - cur)
         }
       }
+
       return rele[k]
     },
   },
@@ -266,7 +273,9 @@ const codingContractTypesMetadata = [
       const m = data[1]
       const currentRow = []
       currentRow.length = n
-      for (let i = 0; i < n; i++) currentRow[i] = 1
+      for (let i = 0; i < n; i++) {
+        currentRow[i] = 1
+      }
       for (let row = 1; row < m; row++) {
         for (let i = 1; i < n; i++) {
           currentRow[i] += currentRow[i - 1]
@@ -297,6 +306,7 @@ const codingContractTypesMetadata = [
           }
         }
       }
+
       return obstacleGrid[obstacleGrid.length - 1][obstacleGrid[0].length - 1]
     },
   },
@@ -319,7 +329,9 @@ const codingContractTypesMetadata = [
         if (s.length === index) {
           if (left === 0 && right === 0 && pair === 0) {
             for (let i = 0; i < res.length; i++) {
-              if (res[i] === solution) return
+              if (res[i] === solution) {
+                return
+              }
             }
             res.push(solution)
           }
@@ -327,7 +339,9 @@ const codingContractTypesMetadata = [
         }
 
         if (s[index] === "(") {
-          if (left > 0) dfs(pair, index + 1, left - 1, right, s, solution, res)
+          if (left > 0) {
+            dfs(pair, index + 1, left - 1, right, s, solution, res)
+          }
           dfs(pair + 1, index + 1, left, right, s, solution + s[index], res)
         } else if (s[index] === ")") {
           if (right > 0) dfs(pair, index + 1, left, right - 1, s, solution, res)
@@ -356,7 +370,9 @@ const codingContractTypesMetadata = [
         }
 
         for (let i = pos; i < num.length; ++i) {
-          if (i != pos && num[pos] == "0") break
+          if (i != pos && num[pos] == "0") {
+            break
+          }
           const cur = parseInt(num.substring(pos, i + 1))
           if (pos === 0) {
             helper(res, path + cur, num, target, i + 1, cur, cur)
@@ -368,10 +384,97 @@ const codingContractTypesMetadata = [
         }
       }
 
-      if (num == null || num.length === 0) return []
+      if (num == null || num.length === 0) {
+        return []
+      }
+
       const result = []
       helper(result, "", num, target, 0, 0, 0)
       return result
+    },
+  },
+  {
+    name: "Square Root",
+    solver: function (data) {
+      const n = BigInt(data)
+
+      if (n < 2n) {
+        return n.toString()
+      }
+
+      let x0 = n
+      let x1 = (x0 + 1n) >> 1n
+
+      while (x1 < x0) {
+        x0 = x1
+        x1 = (x1 + n / x1) >> 1n
+      }
+
+      const low = x0
+      const high = low + 1n
+      const lowDiff = n - low * low
+      const highDiff = high * high - n
+
+      return (lowDiff <= highDiff ? low : high).toString()
+    },
+  },
+  {
+    name: "Encryption I: Caesar Cipher",
+    solver: function (data) {
+      const text = data[0]
+      const shift = data[1] % 26
+      let out = ""
+
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i]
+        const code = text.charCodeAt(i)
+
+        if (ch === " ") {
+          out += ch
+          continue
+        }
+
+        if (code >= 65 && code <= 90) {
+          const decoded = ((code - 65 - shift + 26) % 26) + 65
+          out += String.fromCharCode(decoded)
+          continue
+        }
+
+        out += ch
+      }
+
+      return out
+    },
+  },
+  {
+    name: "Compression I: RLE Compression",
+    solver: function (data) {
+      if (!data || data.length === 0) {
+        return ""
+      }
+
+      let out = ""
+      let i = 0
+
+      while (i < data.length) {
+        const ch = data[i]
+        let run = 1
+
+        while (i + run < data.length && data[i + run] === ch) {
+          run++
+        }
+
+        let remaining = run
+        while (remaining > 9) {
+          out += "9" + ch
+          remaining -= 9
+        }
+
+        out += String(remaining) + ch
+        i += run
+      }
+
+      return out
     },
   },
 ]
@@ -384,7 +487,9 @@ function findSolver(type) {
 
 function findAnswer(contract) {
   const solverEntry = findSolver(contract.type)
-  if (!solverEntry) return null
+  if (!solverEntry) {
+    return null
+  }
   return solverEntry.solver(contract.data)
 }
 
@@ -404,7 +509,9 @@ function getAttemptVariants(answer) {
 
   if (Array.isArray(answer)) {
     addVariant(JSON.stringify(answer))
-    addVariant(convert2DArrayToString(answer))
+    if (answer.length > 0 && Array.isArray(answer[0])) {
+      addVariant(convert2DArrayToString(answer))
+    }
   } else if (typeof answer === "number") {
     addVariant(answer.toString())
   } else if (typeof answer === "bigint") {
@@ -458,7 +565,9 @@ export async function main(ns) {
 
   const serverMap = getItem(settings.keys.serverMap)
   if (!serverMap || !serverMap.servers) {
-    ns.tprint(`[${localeHHMMSS()}] ERROR: Missing server map in localStorage key ${settings.keys.serverMap}`)
+    ns.tprint(
+      `[${localeHHMMSS()}] ERROR: Missing server map in localStorage key ${settings.keys.serverMap}`
+    )
     return
   }
 
@@ -467,10 +576,14 @@ export async function main(ns) {
 
   Object.keys(serverMap.servers).forEach((targetHost) => {
     const files = ns.ls(targetHost)
-    if (!files || !files.length) return
+    if (!files || !files.length) {
+      return
+    }
 
     const contracts = files.filter((file) => file.endsWith(".cct"))
-    if (!contracts.length) return
+    if (!contracts.length) {
+      return
+    }
 
     contracts.forEach((contractFile) => {
       const type = ns.codingcontract.getContractType(contractFile, targetHost)
