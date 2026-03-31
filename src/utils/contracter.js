@@ -1,40 +1,44 @@
+// utils/contracter.js
 // Based on https://github.com/danielyxie/bitburner/blob/master/src/data/codingcontracttypes.ts
+
 const settings = {
   keys: {
-    serverMap: 'BB_SERVER_MAP',
+    serverMap: "BB_SERVER_MAP",
   },
 }
 
-function getItem(key) {
-  let item = localStorage.getItem(key)
+const RETRY_DELAY_MS = 25
 
+function getItem(key) {
+  const item = localStorage.getItem(key)
   return item ? JSON.parse(item) : undefined
 }
 
 function localeHHMMSS(ms = 0) {
-  if (!ms) {
-    ms = new Date().getTime()
-  }
-
+  if (!ms) ms = Date.now()
   return new Date(ms).toLocaleTimeString()
 }
 
+function safeStringify(obj) {
+  return JSON.stringify(obj, (_, v) => (typeof v === "bigint" ? v.toString() : v))
+}
+
 function convert2DArrayToString(arr) {
-  var components = []
+  const components = []
   arr.forEach(function (e) {
-    var s = e.toString()
-    s = ['[', s, ']'].join('')
+    let s = e.toString()
+    s = ["[", s, "]"].join("")
     components.push(s)
   })
-  return components.join(',').replace(/\s/g, '')
+  return components.join(",").replace(/\s/g, "")
 }
 
 const codingContractTypesMetadata = [
   {
-    name: 'Find Largest Prime Factor',
+    name: "Find Largest Prime Factor",
     solver: function (data) {
-      var fac = 2
-      var n = data
+      let fac = 2
+      let n = data
       while (n > (fac - 1) * (fac - 1)) {
         while (n % fac === 0) {
           n = Math.round(n / fac)
@@ -45,23 +49,23 @@ const codingContractTypesMetadata = [
     },
   },
   {
-    name: 'Subarray with Maximum Sum',
+    name: "Subarray with Maximum Sum",
     solver: function (data) {
-      var nums = data.slice()
-      for (var i = 1; i < nums.length; i++) {
+      const nums = data.slice()
+      for (let i = 1; i < nums.length; i++) {
         nums[i] = Math.max(nums[i], nums[i] + nums[i - 1])
       }
       return Math.max.apply(Math, nums)
     },
   },
   {
-    name: 'Total Ways to Sum',
+    name: "Total Ways to Sum",
     solver: function (data) {
-      var ways = [1]
+      const ways = [1]
       ways.length = data + 1
       ways.fill(0, 1)
-      for (var i = 1; i < data; ++i) {
-        for (var j = i; j <= data; ++j) {
+      for (let i = 1; i < data; ++i) {
+        for (let j = i; j <= data; ++j) {
           ways[j] += ways[j - i]
         }
       }
@@ -69,78 +73,66 @@ const codingContractTypesMetadata = [
     },
   },
   {
-    name: 'Spiralize Matrix',
-    solver: function (data, ans) {
-      var spiral = []
-      var m = data.length
-      var n = data[0].length
-      var u = 0
-      var d = m - 1
-      var l = 0
-      var r = n - 1
-      var k = 0
+    name: "Spiralize Matrix",
+    solver: function (data) {
+      const spiral = []
+      const m = data.length
+      const n = data[0].length
+      let u = 0
+      let d = m - 1
+      let l = 0
+      let r = n - 1
+      let k = 0
       while (true) {
-        // Up
-        for (var col = l; col <= r; col++) {
+        for (let col = l; col <= r; col++) {
           spiral[k] = data[u][col]
           ++k
         }
-        if (++u > d) {
-          break
-        }
-        // Right
-        for (var row = u; row <= d; row++) {
+        if (++u > d) break
+
+        for (let row = u; row <= d; row++) {
           spiral[k] = data[row][r]
           ++k
         }
-        if (--r < l) {
-          break
-        }
-        // Down
-        for (var col = r; col >= l; col--) {
+        if (--r < l) break
+
+        for (let col = r; col >= l; col--) {
           spiral[k] = data[d][col]
           ++k
         }
-        if (--d < u) {
-          break
-        }
-        // Left
-        for (var row = d; row >= u; row--) {
+        if (--d < u) break
+
+        for (let row = d; row >= u; row--) {
           spiral[k] = data[row][l]
           ++k
         }
-        if (++l > r) {
-          break
-        }
+        if (++l > r) break
       }
-
       return spiral
     },
   },
   {
-    name: 'Array Jumping Game',
+    name: "Array Jumping Game",
     solver: function (data) {
-      var n = data.length
-      var i = 0
-      for (var reach = 0; i < n && i <= reach; ++i) {
+      const n = data.length
+      let i = 0
+      for (let reach = 0; i < n && i <= reach; ++i) {
         reach = Math.max(i + data[i], reach)
       }
-      var solution = i === n
-      return solution ? 1 : 0
+      return i === n ? 1 : 0
     },
   },
   {
-    name: 'Merge Overlapping Intervals',
+    name: "Merge Overlapping Intervals",
     solver: function (data) {
-      var intervals = data.slice()
+      const intervals = data.slice()
       intervals.sort(function (a, b) {
         return a[0] - b[0]
       })
-      var result = []
-      var start = intervals[0][0]
-      var end = intervals[0][1]
-      for (var _i = 0, intervals_1 = intervals; _i < intervals_1.length; _i++) {
-        var interval = intervals_1[_i]
+      const result = []
+      let start = intervals[0][0]
+      let end = intervals[0][1]
+      for (const interval of intervals) {
         if (interval[0] <= end) {
           end = Math.max(end, interval[1])
         } else {
@@ -150,25 +142,24 @@ const codingContractTypesMetadata = [
         }
       }
       result.push([start, end])
-      var sanitizedResult = convert2DArrayToString(result)
-      return sanitizedResult
+      return convert2DArrayToString(result)
     },
   },
   {
-    name: 'Generate IP Addresses',
-    solver: function (data, ans) {
-      var ret = []
-      for (var a = 1; a <= 3; ++a) {
-        for (var b = 1; b <= 3; ++b) {
-          for (var c = 1; c <= 3; ++c) {
-            for (var d = 1; d <= 3; ++d) {
+    name: "Generate IP Addresses",
+    solver: function (data) {
+      const ret = []
+      for (let a = 1; a <= 3; ++a) {
+        for (let b = 1; b <= 3; ++b) {
+          for (let c = 1; c <= 3; ++c) {
+            for (let d = 1; d <= 3; ++d) {
               if (a + b + c + d === data.length) {
-                var A = parseInt(data.substring(0, a), 10)
-                var B = parseInt(data.substring(a, a + b), 10)
-                var C = parseInt(data.substring(a + b, a + b + c), 10)
-                var D = parseInt(data.substring(a + b + c, a + b + c + d), 10)
+                const A = parseInt(data.substring(0, a), 10)
+                const B = parseInt(data.substring(a, a + b), 10)
+                const C = parseInt(data.substring(a + b, a + b + c), 10)
+                const D = parseInt(data.substring(a + b + c, a + b + c + d), 10)
                 if (A <= 255 && B <= 255 && C <= 255 && D <= 255) {
-                  var ip = [A.toString(), '.', B.toString(), '.', C.toString(), '.', D.toString()].join('')
+                  const ip = [A.toString(), ".", B.toString(), ".", C.toString(), ".", D.toString()].join("")
                   if (ip.length === data.length + 3) {
                     ret.push(ip)
                   }
@@ -182,11 +173,11 @@ const codingContractTypesMetadata = [
     },
   },
   {
-    name: 'Algorithmic Stock Trader I',
+    name: "Algorithmic Stock Trader I",
     solver: function (data) {
-      var maxCur = 0
-      var maxSoFar = 0
-      for (var i = 1; i < data.length; ++i) {
+      let maxCur = 0
+      let maxSoFar = 0
+      for (let i = 1; i < data.length; ++i) {
         maxCur = Math.max(0, (maxCur += data[i] - data[i - 1]))
         maxSoFar = Math.max(maxCur, maxSoFar)
       }
@@ -194,24 +185,23 @@ const codingContractTypesMetadata = [
     },
   },
   {
-    name: 'Algorithmic Stock Trader II',
+    name: "Algorithmic Stock Trader II",
     solver: function (data) {
-      var profit = 0
-      for (var p = 1; p < data.length; ++p) {
+      let profit = 0
+      for (let p = 1; p < data.length; ++p) {
         profit += Math.max(data[p] - data[p - 1], 0)
       }
       return profit.toString()
     },
   },
   {
-    name: 'Algorithmic Stock Trader III',
+    name: "Algorithmic Stock Trader III",
     solver: function (data) {
-      var hold1 = Number.MIN_SAFE_INTEGER
-      var hold2 = Number.MIN_SAFE_INTEGER
-      var release1 = 0
-      var release2 = 0
-      for (var _i = 0, data_1 = data; _i < data_1.length; _i++) {
-        var price = data_1[_i]
+      let hold1 = Number.MIN_SAFE_INTEGER
+      let hold2 = Number.MIN_SAFE_INTEGER
+      let release1 = 0
+      let release2 = 0
+      for (const price of data) {
         release2 = Math.max(release2, hold2 + price)
         hold2 = Math.max(hold2, release1 - price)
         release1 = Math.max(release1, hold1 + price)
@@ -221,33 +211,34 @@ const codingContractTypesMetadata = [
     },
   },
   {
-    name: 'Algorithmic Stock Trader IV',
+    name: "Algorithmic Stock Trader IV",
     solver: function (data) {
-      var k = data[0]
-      var prices = data[1]
-      var len = prices.length
-      if (len < 2) {
-        return 0
-      }
+      const k = data[0]
+      const prices = data[1]
+      const len = prices.length
+      if (len < 2) return 0
+
       if (k > len / 2) {
-        var res = 0
-        for (var i = 1; i < len; ++i) {
+        let res = 0
+        for (let i = 1; i < len; ++i) {
           res += Math.max(prices[i] - prices[i - 1], 0)
         }
         return res
       }
-      var hold = []
-      var rele = []
+
+      const hold = []
+      const rele = []
       hold.length = k + 1
       rele.length = k + 1
-      for (var i = 0; i <= k; ++i) {
+
+      for (let i = 0; i <= k; ++i) {
         hold[i] = Number.MIN_SAFE_INTEGER
         rele[i] = 0
       }
-      var cur
-      for (var i = 0; i < len; ++i) {
-        cur = prices[i]
-        for (var j = k; j > 0; --j) {
+
+      for (let i = 0; i < len; ++i) {
+        const cur = prices[i]
+        for (let j = k; j > 0; --j) {
           rele[j] = Math.max(rele[j], hold[j] + cur)
           hold[j] = Math.max(hold[j], rele[j - 1] - cur)
         }
@@ -256,12 +247,12 @@ const codingContractTypesMetadata = [
     },
   },
   {
-    name: 'Minimum Path Sum in a Triangle',
+    name: "Minimum Path Sum in a Triangle",
     solver: function (data) {
-      var n = data.length
-      var dp = data[n - 1].slice()
-      for (var i = n - 2; i > -1; --i) {
-        for (var j = 0; j < data[i].length; ++j) {
+      const n = data.length
+      const dp = data[n - 1].slice()
+      for (let i = n - 2; i > -1; --i) {
+        for (let j = 0; j < data[i].length; ++j) {
           dp[j] = Math.min(dp[j], dp[j + 1]) + data[i][j]
         }
       }
@@ -269,17 +260,15 @@ const codingContractTypesMetadata = [
     },
   },
   {
-    name: 'Unique Paths in a Grid I',
+    name: "Unique Paths in a Grid I",
     solver: function (data) {
-      var n = data[0] // Number of rows
-      var m = data[1] // Number of columns
-      var currentRow = []
+      const n = data[0]
+      const m = data[1]
+      const currentRow = []
       currentRow.length = n
-      for (var i = 0; i < n; i++) {
-        currentRow[i] = 1
-      }
-      for (var row = 1; row < m; row++) {
-        for (var i = 1; i < n; i++) {
+      for (let i = 0; i < n; i++) currentRow[i] = 1
+      for (let row = 1; row < m; row++) {
+        for (let i = 1; i < n; i++) {
           currentRow[i] += currentRow[i - 1]
         }
       }
@@ -287,21 +276,24 @@ const codingContractTypesMetadata = [
     },
   },
   {
-    name: 'Unique Paths in a Grid II',
+    name: "Unique Paths in a Grid II",
     solver: function (data) {
-      var obstacleGrid = []
+      const obstacleGrid = []
       obstacleGrid.length = data.length
-      for (var i = 0; i < obstacleGrid.length; ++i) {
+      for (let i = 0; i < obstacleGrid.length; ++i) {
         obstacleGrid[i] = data[i].slice()
       }
-      for (var i = 0; i < obstacleGrid.length; i++) {
-        for (var j = 0; j < obstacleGrid[0].length; j++) {
+
+      for (let i = 0; i < obstacleGrid.length; i++) {
+        for (let j = 0; j < obstacleGrid[0].length; j++) {
           if (obstacleGrid[i][j] == 1) {
             obstacleGrid[i][j] = 0
           } else if (i == 0 && j == 0) {
             obstacleGrid[0][0] = 1
           } else {
-            obstacleGrid[i][j] = (i > 0 ? obstacleGrid[i - 1][j] : 0) + (j > 0 ? obstacleGrid[i][j - 1] : 0)
+            obstacleGrid[i][j] =
+              (i > 0 ? obstacleGrid[i - 1][j] : 0) +
+              (j > 0 ? obstacleGrid[i][j - 1] : 0)
           }
         }
       }
@@ -309,52 +301,52 @@ const codingContractTypesMetadata = [
     },
   },
   {
-    name: 'Sanitize Parentheses in Expression',
+    name: "Sanitize Parentheses in Expression",
     solver: function (data) {
-      var left = 0
-      var right = 0
-      var res = []
-      for (var i = 0; i < data.length; ++i) {
-        if (data[i] === '(') {
+      let left = 0
+      let right = 0
+      const res = []
+
+      for (let i = 0; i < data.length; ++i) {
+        if (data[i] === "(") {
           ++left
-        } else if (data[i] === ')') {
+        } else if (data[i] === ")") {
           left > 0 ? --left : ++right
         }
       }
+
       function dfs(pair, index, left, right, s, solution, res) {
         if (s.length === index) {
           if (left === 0 && right === 0 && pair === 0) {
-            for (var i = 0; i < res.length; i++) {
-              if (res[i] === solution) {
-                return
-              }
+            for (let i = 0; i < res.length; i++) {
+              if (res[i] === solution) return
             }
             res.push(solution)
           }
           return
         }
-        if (s[index] === '(') {
-          if (left > 0) {
-            dfs(pair, index + 1, left - 1, right, s, solution, res)
-          }
+
+        if (s[index] === "(") {
+          if (left > 0) dfs(pair, index + 1, left - 1, right, s, solution, res)
           dfs(pair + 1, index + 1, left, right, s, solution + s[index], res)
-        } else if (s[index] === ')') {
+        } else if (s[index] === ")") {
           if (right > 0) dfs(pair, index + 1, left, right - 1, s, solution, res)
           if (pair > 0) dfs(pair - 1, index + 1, left, right, s, solution + s[index], res)
         } else {
           dfs(pair, index + 1, left, right, s, solution + s[index], res)
         }
       }
-      dfs(0, 0, left, right, data, '', res)
 
+      dfs(0, 0, left, right, data, "", res)
       return res
     },
   },
   {
-    name: 'Find All Valid Math Expressions',
+    name: "Find All Valid Math Expressions",
     solver: function (data) {
-      var num = data[0]
-      var target = data[1]
+      const num = data[0]
+      const target = data[1]
+
       function helper(res, path, num, target, pos, evaluated, multed) {
         if (pos === num.length) {
           if (target === evaluated) {
@@ -362,95 +354,194 @@ const codingContractTypesMetadata = [
           }
           return
         }
-        for (var i = pos; i < num.length; ++i) {
-          if (i != pos && num[pos] == '0') {
-            break
-          }
-          var cur = parseInt(num.substring(pos, i + 1))
+
+        for (let i = pos; i < num.length; ++i) {
+          if (i != pos && num[pos] == "0") break
+          const cur = parseInt(num.substring(pos, i + 1))
           if (pos === 0) {
             helper(res, path + cur, num, target, i + 1, cur, cur)
           } else {
-            helper(res, path + '+' + cur, num, target, i + 1, evaluated + cur, cur)
-            helper(res, path + '-' + cur, num, target, i + 1, evaluated - cur, -cur)
-            helper(res, path + '*' + cur, num, target, i + 1, evaluated - multed + multed * cur, multed * cur)
+            helper(res, path + "+" + cur, num, target, i + 1, evaluated + cur, cur)
+            helper(res, path + "-" + cur, num, target, i + 1, evaluated - cur, -cur)
+            helper(res, path + "*" + cur, num, target, i + 1, evaluated - multed + multed * cur, multed * cur)
           }
         }
       }
 
-      if (num == null || num.length === 0) {
-        return []
-      }
-      var result = []
-      helper(result, '', num, target, 0, 0, 0)
+      if (num == null || num.length === 0) return []
+      const result = []
+      helper(result, "", num, target, 0, 0, 0)
       return result
     },
   },
 ]
 
+const knownContractTypes = new Set(codingContractTypesMetadata.map((x) => x.name))
+
+function findSolver(type) {
+  return codingContractTypesMetadata.find((entry) => entry.name === type)
+}
+
 function findAnswer(contract) {
-  let answer
+  const solverEntry = findSolver(contract.type)
+  if (!solverEntry) return null
+  return solverEntry.solver(contract.data)
+}
 
-  const codingContractSolution = codingContractTypesMetadata.find((codingContractTypeMetadata) => codingContractTypeMetadata.name === contract.type)
+function getAttemptVariants(answer) {
+  const variants = []
+  const seen = new Set()
 
-  if (codingContractSolution) {
-    answer = codingContractSolution.solver(contract.data)
-  } else {
-    console.error('Unable to find answer for', contract)
+  function addVariant(value) {
+    const key = safeStringify(value)
+    if (!seen.has(key)) {
+      seen.add(key)
+      variants.push(value)
+    }
   }
 
-  return answer
+  addVariant(answer)
+
+  if (Array.isArray(answer)) {
+    addVariant(JSON.stringify(answer))
+    addVariant(convert2DArrayToString(answer))
+  } else if (typeof answer === "number") {
+    addVariant(answer.toString())
+  } else if (typeof answer === "bigint") {
+    addVariant(answer.toString())
+  }
+
+  return variants
+}
+
+async function attemptWithRetry(ns, contract, answer) {
+  const variants = getAttemptVariants(answer)
+
+  for (let i = 0; i < variants.length; i++) {
+    const candidate = variants[i]
+    const reward = ns.codingcontract.attempt(
+      candidate,
+      contract.contract,
+      contract.hostname,
+      { returnReward: true }
+    )
+
+    if (reward) {
+      return {
+        success: true,
+        reward,
+        attemptIndex: i,
+        answerUsed: candidate,
+      }
+    }
+
+    if (i < variants.length - 1) {
+      await ns.sleep(RETRY_DELAY_MS)
+    }
+  }
+
+  return {
+    success: false,
+    reward: "",
+    attemptIndex: variants.length - 1,
+    answerUsed: variants[variants.length - 1],
+  }
 }
 
 export async function main(ns) {
   ns.tprint(`[${localeHHMMSS()}] Starting contracter.js`)
 
-  let hostname = ns.getHostname()
-
-  if (hostname !== 'home') {
-    throw new Exception('Run the script from home')
+  const hostname = ns.getHostname()
+  if (hostname !== "home") {
+    throw new Error("Run the script from home")
   }
 
   const serverMap = getItem(settings.keys.serverMap)
+  if (!serverMap || !serverMap.servers) {
+    ns.tprint(`[${localeHHMMSS()}] ERROR: Missing server map in localStorage key ${settings.keys.serverMap}`)
+    return
+  }
+
   const contractsDb = []
+  const skippedUnknown = []
 
-  Object.keys(serverMap.servers).forEach((hostname) => {
-    const files = ns.ls(hostname)
-    if (files && files.length) {
-      const contracts = files.filter((file) => file.includes('.cct'))
+  Object.keys(serverMap.servers).forEach((targetHost) => {
+    const files = ns.ls(targetHost)
+    if (!files || !files.length) return
 
-      if (contracts.length) {
-        contracts.forEach((contract) => {
-          const contractData = {
-            contract,
-            hostname,
-            type: ns.codingcontract.getContractType(contract, hostname),
-            data: ns.codingcontract.getData(contract, hostname),
-          }
+    const contracts = files.filter((file) => file.endsWith(".cct"))
+    if (!contracts.length) return
 
-          contractsDb.push(contractData)
-        })
+    contracts.forEach((contractFile) => {
+      const type = ns.codingcontract.getContractType(contractFile, targetHost)
+      const contractData = {
+        contract: contractFile,
+        hostname: targetHost,
+        type,
+        data: ns.codingcontract.getData(contractFile, targetHost),
       }
-    }
+
+      if (!knownContractTypes.has(type)) {
+        skippedUnknown.push({
+          contract: contractFile,
+          hostname: targetHost,
+          type,
+        })
+        return
+      }
+
+      contractsDb.push(contractData)
+    })
   })
 
-  if (contractsDb.length) {
-    for (let i = 0; i < contractsDb.length; i++) {
-      const contract = contractsDb[i]
-      const answer = findAnswer(contract)
-
-      if (answer != null) {
-        const solvingResult = ns.codingcontract.attempt(answer, contract.contract, contract.hostname, { returnReward: true })
-
-        if (solvingResult) {
-          ns.tprint(`[${localeHHMMSS()}] Solved ${contract.contract} on ${contract.hostname}. ${solvingResult}`)
-        } else {
-          ns.tprint(`[${localeHHMMSS()}] Wrong answer for ${contract.contract} on ${contract.hostname}`)
-        }
-      } else {
-        ns.tprint(`[${localeHHMMSS()}] Unable to find the answer for: ${JSON.stringify(contract)}`)
-      }
-
-      await ns.sleep(10)
+  if (skippedUnknown.length) {
+    for (const skipped of skippedUnknown) {
+      ns.tprint(
+        `[${localeHHMMSS()}] Skipping unsupported contract type "${skipped.type}" for ${skipped.contract} on ${skipped.hostname}`
+      )
     }
+  }
+
+  if (!contractsDb.length) {
+    ns.tprint(`[${localeHHMMSS()}] No supported contracts found.`)
+    return
+  }
+
+  for (let i = 0; i < contractsDb.length; i++) {
+    const contract = contractsDb[i]
+    let answer = null
+
+    try {
+      answer = findAnswer(contract)
+    } catch (err) {
+      ns.tprint(
+        `[${localeHHMMSS()}] Solver crashed for ${contract.contract} on ${contract.hostname} (${contract.type}): ${String(err)}`
+      )
+      await ns.sleep(10)
+      continue
+    }
+
+    if (answer == null) {
+      ns.tprint(
+        `[${localeHHMMSS()}] No answer generated for ${contract.contract} on ${contract.hostname} (${contract.type})`
+      )
+      await ns.sleep(10)
+      continue
+    }
+
+    const result = await attemptWithRetry(ns, contract, answer)
+
+    if (result.success) {
+      const retryNote = result.attemptIndex > 0 ? ` (retry ${result.attemptIndex})` : ""
+      ns.tprint(
+        `[${localeHHMMSS()}] Solved ${contract.contract} on ${contract.hostname}${retryNote}. ${result.reward}`
+      )
+    } else {
+      ns.tprint(
+        `[${localeHHMMSS()}] Failed ${contract.contract} on ${contract.hostname} after retries. type=${contract.type} answer=${safeStringify(answer)}`
+      )
+    }
+
+    await ns.sleep(10)
   }
 }
