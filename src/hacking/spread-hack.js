@@ -2,7 +2,7 @@
 export async function main(ns) {
   ns.disableLog("ALL");
 
-  const HOME_RESERVED_RAM = 32; // keep some RAM free on home
+  const HOME_RESERVED_RAM = 2048; // keep some RAM free on home
   const WORKER = "/tmp/spread-worker.js";
 
   const workerCode = `
