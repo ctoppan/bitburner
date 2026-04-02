@@ -1,12 +1,15 @@
 /** @param {NS} ns **/
 export async function main(ns) {
-  const hackPctStart = Number(ns.args[0] ?? 0.05)
-  const spacingArg = Number(ns.args[1] ?? -1)
   const reserveHome = Number(ns.args[2] ?? 1024)
   const scanTop = Number(ns.args[3] ?? 25)
+  const spacingArg = Number(ns.args[1] ?? -1)
 
   ns.disableLog("ALL")
   ns.ui.openTail()
+
+  const hackScript = "/hacking/main/hack.js"
+  const growScript = "/hacking/main/grow.js"
+  const weakenScript = "/hacking/main/weaken.js"
 
   let currentTarget = null
 
@@ -20,46 +23,99 @@ export async function main(ns) {
     }
 
     if (target !== currentTarget) {
-      ns.print(`[overlap] Switching -> ${target}`)
-      killBatchWorkers(ns)
+      ns.print(`[overlap] Switching target -> ${target}`)
+      killWorkers(ns, hackScript, growScript, weakenScript)
       currentTarget = target
     }
 
-    const prepped = await prepIfNeeded(ns, target, reserveHome)
-    if (!prepped) continue
+    await deployFiles(ns, [hackScript, growScript, weakenScript], reserveHome)
+
+    const ready = await prepIfNeeded(ns, target, reserveHome, growScript, weakenScript)
+    if (!ready) continue
 
     const weakenTime = ns.getWeakenTime(target)
-    const spacing = spacingArg > 0 ? spacingArg : Math.max(40, Math.floor(weakenTime / 15))
+    const spacing = spacingArg > 0 ? spacingArg : Math.max(80, Math.floor(weakenTime / 20))
 
-    const launched = launchBatch(ns, target, spacing, reserveHome)
+    const launched = launchBatches(ns, target, spacing, reserveHome, hackScript, growScript, weakenScript)
+    ns.print(`[overlap] target=${target} spacing=${spacing}ms launched=${launched}`)
 
-    ns.print(`[overlap] target=${target} spacing=${spacing} launched=${launched}`)
-
-    await ns.sleep(weakenTime + spacing * 6)
+    await ns.sleep(Math.max(3000, weakenTime + spacing * 8))
   }
 }
 
-function launchBatch(ns, target, spacing, reserveHome) {
-  const hosts = getHosts(ns, reserveHome)
+async function deployFiles(ns, files, reserveHome) {
+  for (const host of getHosts(ns, reserveHome)) {
+    if (host === "home") continue
+    await ns.scp(files, host, "home")
+  }
+}
+
+async function prepIfNeeded(ns, target, reserveHome, growScript, weakenScript) {
+  const money = ns.getServerMoneyAvailable(target)
+  const maxMoney = ns.getServerMaxMoney(target)
+  const sec = ns.getServerSecurityLevel(target)
+  const minSec = ns.getServerMinSecurityLevel(target)
+
+  const moneyReady = maxMoney > 0 && money >= maxMoney * 0.98
+  const secReady = sec <= minSec + 0.5
+
+  if (moneyReady && secReady) return true
+
+  ns.print(
+    `[prep] ${target} money=${maxMoney > 0 ? ((money / maxMoney) * 100).toFixed(1) : "0.0"}% sec+${(sec - minSec).toFixed(2)}`
+  )
+
   let launched = 0
 
-  for (const host of hosts) {
-    let free = freeRam(ns, host, reserveHome)
+  for (const host of getHosts(ns, reserveHome)) {
+    const free = freeRam(ns, host, reserveHome)
+    if (free < 2) continue
+
+    if (!secReady) {
+      const ram = ns.getScriptRam(weakenScript, host) || 1.75
+      const threads = Math.floor(free / ram)
+      if (threads > 0) {
+        const pid = ns.exec(weakenScript, host, 1, target, threads, 0)
+        if (pid !== 0) launched++
+      }
+    } else if (!moneyReady) {
+      const ram = ns.getScriptRam(growScript, host) || 1.75
+      const threads = Math.floor(free / ram)
+      if (threads > 0) {
+        const pid = ns.exec(growScript, host, 1, target, threads, 0)
+        if (pid !== 0) launched++
+      }
+    }
+  }
+
+  ns.print(`[prep] launched jobs=${launched}`)
+  await ns.sleep(3000)
+  return false
+}
+
+function launchBatches(ns, target, spacing, reserveHome, hackScript, growScript, weakenScript) {
+  let launched = 0
+
+  for (const host of getHosts(ns, reserveHome)) {
+    const free = freeRam(ns, host, reserveHome)
     if (free < 6) continue
 
-    const scriptRam = 1.75 * 3 // hack + grow + weaken rough
+    const hackRam = ns.getScriptRam(hackScript, host) || 1.7
+    const growRam = ns.getScriptRam(growScript, host) || 1.75
+    const weakenRam = ns.getScriptRam(weakenScript, host) || 1.75
 
-    const sets = Math.floor(free / scriptRam)
+    const oneSetRam = hackRam + growRam + weakenRam
+    const sets = Math.floor(free / oneSetRam)
     if (sets <= 0) continue
 
     for (let i = 0; i < sets; i++) {
-      const delayBase = i * spacing * 4
+      const baseDelay = i * spacing * 4
 
-      const h = ns.exec("/hacking/batch/hack.js", host, 1, target, 1, delayBase)
-      const g = ns.exec("/hacking/batch/grow.js", host, 1, target, 1, delayBase + spacing)
-      const w = ns.exec("/hacking/batch/weaken.js", host, 1, target, 1, delayBase + spacing * 2)
+      const h = ns.exec(hackScript, host, 1, target, 1, baseDelay)
+      const g = ns.exec(growScript, host, 1, target, 1, baseDelay + spacing)
+      const w = ns.exec(weakenScript, host, 1, target, 1, baseDelay + spacing * 2)
 
-      if (h && g && w) {
+      if (h !== 0 && g !== 0 && w !== 0) {
         launched++
       } else {
         break
@@ -70,78 +126,45 @@ function launchBatch(ns, target, spacing, reserveHome) {
   return launched
 }
 
-async function prepIfNeeded(ns, target, reserveHome) {
-  const money = ns.getServerMoneyAvailable(target)
-  const maxMoney = ns.getServerMaxMoney(target)
-  const sec = ns.getServerSecurityLevel(target)
-  const minSec = ns.getServerMinSecurityLevel(target)
-
-  const moneyReady = money >= maxMoney * 0.98
-  const secReady = sec <= minSec + 0.5
-
-  if (moneyReady && secReady) return true
-
-  ns.print(`[prep] ${target} money=${((money/maxMoney)*100).toFixed(1)}% sec+${(sec-minSec).toFixed(2)}`)
-
-  const hosts = getHosts(ns, reserveHome)
-
-  for (const host of hosts) {
-    let free = freeRam(ns, host, reserveHome)
-    if (free < 2) continue
-
-    if (!secReady) {
-      const wt = Math.floor(free / 1.75)
-      if (wt > 0) ns.exec("/hacking/basic/weaken.js", host, 1, target, wt)
-    } else if (!moneyReady) {
-      const gt = Math.floor(free / 1.75)
-      if (gt > 0) ns.exec("/hacking/basic/grow.js", host, 1, target, gt)
-    }
-  }
-
-  await ns.sleep(3000)
-  return false
-}
-
 function pickBestTarget(ns, topN) {
   const servers = scanAll(ns)
-    .filter(s => s !== "home")
-    .filter(s => ns.hasRootAccess(s))
-    .filter(s => ns.getServerMaxMoney(s) > 0)
-    .filter(s => ns.getServerRequiredHackingLevel(s) <= ns.getHackingLevel())
+    .filter((s) => s !== "home")
+    .filter((s) => ns.hasRootAccess(s))
+    .filter((s) => ns.getServerMaxMoney(s) > 0)
+    .filter((s) => ns.getServerRequiredHackingLevel(s) <= ns.getHackingLevel())
 
-  return servers
-    .map(s => ({
-      s,
-      score: ns.getServerMaxMoney(s) / ns.getWeakenTime(s)
-    }))
-    .sort((a,b)=>b.score-a.score)[0]?.s
+  const scored = servers.map((s) => {
+    const money = ns.getServerMaxMoney(s)
+    const minSec = ns.getServerMinSecurityLevel(s)
+    const time = ns.getWeakenTime(s)
+    const chance = ns.hackAnalyzeChance(s)
+    return { s, score: (money * Math.max(0.01, chance)) / (time * Math.max(1, minSec)) }
+  })
+
+  scored.sort((a, b) => b.score - a.score)
+  return scored.slice(0, topN)[0]?.s ?? null
 }
 
 function getHosts(ns, reserveHome) {
   return scanAll(ns)
-    .filter(s => ns.hasRootAccess(s))
-    .filter(s => ns.getServerMaxRam(s) > 0)
-    .filter(s => s !== "home" || freeRam(ns, "home", reserveHome) > 8)
+    .filter((s) => ns.hasRootAccess(s))
+    .filter((s) => ns.getServerMaxRam(s) > 0)
+    .filter((s) => s !== "home" || freeRam(ns, "home", reserveHome) > 8)
+    .sort((a, b) => freeRam(ns, b, reserveHome) - freeRam(ns, a, reserveHome))
 }
 
-function freeRam(ns, host, reserveHome=0) {
+function freeRam(ns, host, reserveHome = 0) {
   const max = ns.getServerMaxRam(host)
   const used = ns.getServerUsedRam(host)
   const reserve = host === "home" ? reserveHome : 0
   return Math.max(0, max - used - reserve)
 }
 
-function killBatchWorkers(ns) {
-  const scripts = [
-    "/hacking/batch/hack.js",
-    "/hacking/batch/grow.js",
-    "/hacking/batch/weaken.js",
-  ]
-
+function killWorkers(ns, hackScript, growScript, weakenScript) {
   for (const host of scanAll(ns)) {
-    for (const s of scripts) {
-      ns.scriptKill(s, host)
-    }
+    ns.scriptKill(hackScript, host)
+    ns.scriptKill(growScript, host)
+    ns.scriptKill(weakenScript, host)
   }
 }
 
@@ -150,11 +173,11 @@ function scanAll(ns) {
   const stack = ["home"]
 
   while (stack.length) {
-    const n = stack.pop()
-    if (seen.has(n)) continue
-    seen.add(n)
-    for (const x of ns.scan(n)) {
-      if (!seen.has(x)) stack.push(x)
+    const node = stack.pop()
+    if (seen.has(node)) continue
+    seen.add(node)
+    for (const next of ns.scan(node)) {
+      if (!seen.has(next)) stack.push(next)
     }
   }
 
