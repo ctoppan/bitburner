@@ -75,14 +75,14 @@ async function prepIfNeeded(ns, target, reserveHome, growScript, weakenScript) {
       const ram = ns.getScriptRam(weakenScript, host) || 1.75
       const threads = Math.floor(free / ram)
       if (threads > 0) {
-        const pid = ns.exec(weakenScript, host, 1, target, threads, 0)
+        const pid = ns.exec(weakenScript, host, threads, target, 0)
         if (pid !== 0) launched++
       }
     } else if (!moneyReady) {
       const ram = ns.getScriptRam(growScript, host) || 1.75
       const threads = Math.floor(free / ram)
       if (threads > 0) {
-        const pid = ns.exec(growScript, host, 1, target, threads, 0)
+        const pid = ns.exec(growScript, host, threads, target, 0)
         if (pid !== 0) launched++
       }
     }
@@ -111,9 +111,9 @@ function launchBatches(ns, target, spacing, reserveHome, hackScript, growScript,
     for (let i = 0; i < sets; i++) {
       const baseDelay = i * spacing * 4
 
-      const h = ns.exec(hackScript, host, 1, target, 1, baseDelay)
-      const g = ns.exec(growScript, host, 1, target, 1, baseDelay + spacing)
-      const w = ns.exec(weakenScript, host, 1, target, 1, baseDelay + spacing * 2)
+      const h = ns.exec(hackScript, host, 1, target, baseDelay)
+      const g = ns.exec(growScript, host, 1, target, baseDelay + spacing)
+      const w = ns.exec(weakenScript, host, 1, target, baseDelay + spacing * 2)
 
       if (h !== 0 && g !== 0 && w !== 0) {
         launched++
