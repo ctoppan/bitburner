@@ -9,16 +9,20 @@ export async function main(ns) {
   } catch {}
 
   const CFG = {
-    defaultHackPct: Number(ns.args[0] ?? 0.03),
+    defaultHackPct: Number(ns.args[0] ?? 0.12),
     defaultSpacing: Number(ns.args[1] ?? -1),
-    homeReserveGb: Number(ns.args[2] ?? 1024),
+    homeReserveGb: Number(ns.args[2] ?? 128),
     targetWindow: Math.max(5, Number(ns.args[3] ?? 30)),
 
     maxParallelPrepTargets: 3,
-    minMoneyRatioToBatch: 0.85,
-    maxSecAboveMinToBatch: 3.0,
-    maxPrepWavesBeforeDowngrade: 4,
-    minFleetFreeForBatchGb: 24,
+    minMoneyRatioToBatch: 0.60,
+    maxSecAboveMinToBatch: 8.0,
+    maxPrepWavesBeforeDowngrade: 6,
+    minFleetFreeForBatchGb: 8,
+
+    minServerMoneyForBatching: 5_000_000,
+    minServerMoneyForPrep: 1_000_000,
+
     xpScript: "/xp/xpGrind.js",
     xpDistributor: "/xp/xpDistributor.js",
   };
@@ -45,19 +49,24 @@ export async function main(ns) {
       await syncWorkersToHosts(ns, hosts, workerScripts);
 
       const fleetFreeRam = hosts.reduce((sum, h) => sum + h.freeRam, 0);
-      const ranked = rankTargets(ns, CFG.targetWindow);
-      const candidateInfos = ranked.map(host => analyzeTarget(ns, host, fleetFreeRam));
+      const ranked = rankTargets(ns, CFG.targetWindow, CFG);
+      const candidateInfos = ranked.map((host) => analyzeTarget(ns, host, fleetFreeRam));
 
-      const batchable = candidateInfos.filter(t => canBatchNow(t, CFG));
-      const prepable = candidateInfos.filter(t => t.maxMoney > 0);
+      const batchable = candidateInfos.filter(
+        (t) => t.maxMoney >= CFG.minServerMoneyForBatching && canBatchNow(t, CFG)
+      );
+      const prepable = candidateInfos.filter(
+        (t) => t.maxMoney >= CFG.minServerMoneyForPrep
+      );
 
       if (batchable.length > 0 && fleetFreeRam >= CFG.minFleetFreeForBatchGb) {
         stopXpMode(ns, CFG.xpScript, CFG.xpDistributor);
 
         const chosen = chooseBatchTarget(batchable, prepWaveCounts, CFG);
-        const spacingMs = CFG.defaultSpacing < 0
-          ? Math.max(20, Math.ceil(ns.getWeakenTime(chosen.host) / 200))
-          : CFG.defaultSpacing;
+        const spacingMs =
+          CFG.defaultSpacing < 0
+            ? Math.max(20, Math.ceil(ns.getWeakenTime(chosen.host) / 200))
+            : CFG.defaultSpacing;
 
         if (lastMode !== "BATCH" || lastTarget !== chosen.host) {
           ns.tprint(`[overlap] BATCH mode -> ${chosen.host}`);
@@ -66,7 +75,17 @@ export async function main(ns) {
         }
 
         killExistingBatchWorkers(ns, hosts, workerScripts);
-        runBatchWave(ns, hosts, chosen.host, CFG.defaultHackPct, spacingMs, hackScript, growScript, weakenScript, candidateInfos);
+        runBatchWave(
+          ns,
+          hosts,
+          chosen.host,
+          CFG.defaultHackPct,
+          spacingMs,
+          hackScript,
+          growScript,
+          weakenScript,
+          candidateInfos
+        );
 
         await ns.sleep(Math.max(5000, Math.floor(ns.getWeakenTime(chosen.host) / 4)));
         continue;
@@ -77,22 +96,36 @@ export async function main(ns) {
       if (prepTargets.length > 0) {
         stopXpMode(ns, CFG.xpScript, CFG.xpDistributor);
 
-        if (lastMode !== "PREP" || lastTarget !== prepTargets.map(t => t.host).join(",")) {
-          ns.tprint(`[overlap] PREP mode -> ${prepTargets.map(t => t.host).join(", ")}`);
+        const prepKey = prepTargets.map((t) => t.host).join(",");
+        if (lastMode !== "PREP" || lastTarget !== prepKey) {
+          ns.tprint(`[overlap] PREP mode -> ${prepTargets.map((t) => t.host).join(", ")}`);
           lastMode = "PREP";
-          lastTarget = prepTargets.map(t => t.host).join(",");
+          lastTarget = prepKey;
         }
 
         ns.clearLog();
-        ns.print(`[overlap] PREP mode | targets=${prepTargets.map(t => t.host).join(", ")} | fleetFree=${formatRam(fleetFreeRam)}`);
+        ns.print(
+          `[overlap] PREP mode | targets=${prepTargets
+            .map((t) => t.host)
+            .join(", ")} | fleetFree=${formatRam(fleetFreeRam)}`
+        );
         for (const t of candidateInfos.slice(0, 6)) {
           const wavesDone = prepWaveCounts.get(t.host) ?? 0;
           ns.print(
-            `[overlap] cand ${t.host.padEnd(16)} money=${pct(t.moneyRatio).padStart(4)} sec+${t.secAboveMin.toFixed(2).padStart(6)} estWaves=${String(t.prepWaves).padStart(3)} seen=${String(wavesDone).padStart(2)}`
+            `[overlap] cand ${t.host.padEnd(18)} money=${pct(t.moneyRatio).padStart(4)} sec+${t.secAboveMin
+              .toFixed(2)
+              .padStart(6)} estWaves=${String(t.prepWaves).padStart(3)} seen=${String(wavesDone).padStart(2)}`
           );
         }
 
-        const waitMs = await runParallelPrep(ns, hosts, prepTargets, growScript, weakenScript, prepWaveCounts);
+        const waitMs = await runParallelPrep(
+          ns,
+          hosts,
+          prepTargets,
+          growScript,
+          weakenScript,
+          prepWaveCounts
+        );
         await ns.sleep(waitMs);
         continue;
       }
@@ -116,7 +149,7 @@ export async function main(ns) {
 }
 
 function getUsableHosts(ns, homeReserveGb) {
-  const rooted = scanAll(ns).filter(h => ns.hasRootAccess(h));
+  const rooted = scanAll(ns).filter((h) => ns.hasRootAccess(h));
 
   const hosts = [];
   for (const host of rooted) {
@@ -161,20 +194,20 @@ async function syncWorkersToHosts(ns, hosts, workerScripts) {
   }
 }
 
-function rankTargets(ns, targetWindow) {
+function rankTargets(ns, targetWindow, cfg) {
   const level = ns.getHackingLevel();
 
-  const candidates = scanAll(ns).filter(host => {
+  const candidates = scanAll(ns).filter((host) => {
     if (host === "home") return false;
     if (host.startsWith("pserv-")) return false;
     if (host.startsWith("hacknet-node-")) return false;
     if (!ns.hasRootAccess(host)) return false;
     if (ns.getServerRequiredHackingLevel(host) > level) return false;
-    if (ns.getServerMaxMoney(host) <= 0) return false;
+    if (ns.getServerMaxMoney(host) < cfg.minServerMoneyForPrep) return false;
     return true;
   });
 
-  const scored = candidates.map(host => {
+  const scored = candidates.map((host) => {
     const maxMoney = ns.getServerMaxMoney(host);
     const minSec = Math.max(1, ns.getServerMinSecurityLevel(host));
     const curSec = Math.max(minSec, ns.getServerSecurityLevel(host));
@@ -182,13 +215,17 @@ function rankTargets(ns, targetWindow) {
     const chance = Math.max(0.01, ns.hackAnalyzeChance(host));
     const weakenTime = Math.max(1, ns.getWeakenTime(host));
     const moneyRatio = maxMoney > 0 ? ns.getServerMoneyAvailable(host) / maxMoney : 0;
-    const prepPenalty = (moneyRatio < 0.85 || (curSec - minSec) > 3) ? 0.6 : 1.0;
-    const score = (maxMoney * growth * chance * prepPenalty) / (minSec * Math.sqrt(weakenTime));
+    const prepPenalty =
+      moneyRatio < cfg.minMoneyRatioToBatch || curSec - minSec > cfg.maxSecAboveMinToBatch
+        ? 0.6
+        : 1.0;
+
+    const score = (maxMoney * chance * growth * prepPenalty) / (minSec * weakenTime);
     return { host, score };
   });
 
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, targetWindow).map(x => x.host);
+  return scored.slice(0, targetWindow).map((x) => x.host);
 }
 
 function analyzeTarget(ns, host, fleetFreeRam) {
@@ -200,16 +237,23 @@ function analyzeTarget(ns, host, fleetFreeRam) {
   const moneyRatio = maxMoney > 0 ? money / maxMoney : 0;
 
   const weakenThreadsNeeded = Math.ceil(secAboveMin / 0.05);
-  const growThreadsNeeded = moneyRatio >= 0.995
-    ? 0
-    : Math.ceil(ns.growthAnalyze(host, Math.max(1.03, 1 / Math.max(0.01, moneyRatio))) || 0);
+  const growThreadsNeeded =
+    moneyRatio >= 0.995
+      ? 0
+      : Math.ceil(
+          ns.growthAnalyze(host, Math.max(1.03, 1 / Math.max(0.01, moneyRatio))) || 0
+        );
 
   const weakenForGrow = Math.ceil((growThreadsNeeded * 0.004) / 0.05);
 
   const weakenRam = ns.getScriptRam("/hacking/batch/batchWeaken.js", "home");
   const growRam = ns.getScriptRam("/hacking/batch/batchGrow.js", "home");
 
-  const prepRamNeed = weakenThreadsNeeded * weakenRam + growThreadsNeeded * growRam + weakenForGrow * weakenRam;
+  const prepRamNeed =
+    weakenThreadsNeeded * weakenRam +
+    growThreadsNeeded * growRam +
+    weakenForGrow * weakenRam;
+
   const prepWaves = fleetFreeRam > 0 ? Math.ceil(prepRamNeed / fleetFreeRam) : 9999;
 
   return {
@@ -233,11 +277,14 @@ function scoreTargetForBatching(ns, host) {
   const minSec = Math.max(1, ns.getServerMinSecurityLevel(host));
   const chance = Math.max(0.01, ns.hackAnalyzeChance(host));
   const weakenTime = Math.max(1, ns.getWeakenTime(host));
-  return (maxMoney * chance) / (minSec * Math.sqrt(weakenTime));
+  return (maxMoney * chance) / (minSec * weakenTime);
 }
 
 function canBatchNow(t, cfg) {
-  return t.moneyRatio >= cfg.minMoneyRatioToBatch && t.secAboveMin <= cfg.maxSecAboveMinToBatch;
+  return (
+    t.moneyRatio >= cfg.minMoneyRatioToBatch &&
+    t.secAboveMin <= cfg.maxSecAboveMinToBatch
+  );
 }
 
 function chooseBatchTarget(batchable, prepWaveCounts, cfg) {
@@ -253,13 +300,17 @@ function chooseBatchTarget(batchable, prepWaveCounts, cfg) {
 
 function choosePrepTargets(prepable, prepWaveCounts, cfg, fleetFreeRam) {
   const sorted = [...prepable]
-    .filter(t => t.prepWaves < 9999)
+    .filter((t) => t.prepWaves < 9999)
     .sort((a, b) => {
       const aWaves = prepWaveCounts.get(a.host) ?? 0;
       const bWaves = prepWaveCounts.get(b.host) ?? 0;
 
-      const aTooSlow = a.prepWaves > cfg.maxPrepWavesBeforeDowngrade || aWaves > cfg.maxPrepWavesBeforeDowngrade;
-      const bTooSlow = b.prepWaves > cfg.maxPrepWavesBeforeDowngrade || bWaves > cfg.maxPrepWavesBeforeDowngrade;
+      const aTooSlow =
+        a.prepWaves > cfg.maxPrepWavesBeforeDowngrade ||
+        aWaves > cfg.maxPrepWavesBeforeDowngrade;
+      const bTooSlow =
+        b.prepWaves > cfg.maxPrepWavesBeforeDowngrade ||
+        bWaves > cfg.maxPrepWavesBeforeDowngrade;
 
       if (aTooSlow !== bTooSlow) return aTooSlow ? 1 : -1;
       if (a.prepWaves !== b.prepWaves) return a.prepWaves - b.prepWaves;
@@ -273,7 +324,10 @@ function choosePrepTargets(prepable, prepWaveCounts, cfg, fleetFreeRam) {
     if (chosen.length >= cfg.maxParallelPrepTargets) break;
 
     const wavesDone = prepWaveCounts.get(t.host) ?? 0;
-    if (t.prepWaves > cfg.maxPrepWavesBeforeDowngrade && wavesDone > cfg.maxPrepWavesBeforeDowngrade) {
+    if (
+      t.prepWaves > cfg.maxPrepWavesBeforeDowngrade &&
+      wavesDone > cfg.maxPrepWavesBeforeDowngrade
+    ) {
       continue;
     }
 
@@ -302,7 +356,9 @@ async function runParallelPrep(ns, hosts, targets, growScript, weakenScript, pre
     prepWaveCounts.set(target.host, (prepWaveCounts.get(target.host) ?? 0) + 1);
 
     ns.print(
-      `[overlap] prep ${target.host} | money=${pct(target.moneyRatio)} sec+${target.secAboveMin.toFixed(2)} waves=${prepWaveCounts.get(target.host)}`
+      `[overlap] prep ${target.host} | money=${pct(target.moneyRatio)} sec+${target.secAboveMin.toFixed(
+        2
+      )} waves=${prepWaveCounts.get(target.host)}`
     );
   }
 
@@ -330,9 +386,15 @@ function runPrepWave(ns, hosts, targetInfo, growScript, weakenScript) {
   }
 
   if (targetInfo.moneyRatio < 0.995) {
-    growThreads = Math.ceil(ns.growthAnalyze(target, Math.max(1.03, 1 / Math.max(0.01, targetInfo.moneyRatio))) || 0);
+    growThreads = Math.ceil(
+      ns.growthAnalyze(target, Math.max(1.03, 1 / Math.max(0.01, targetInfo.moneyRatio))) ||
+        0
+    );
     weakenThreads += Math.ceil((growThreads * 0.004) / 0.05);
-    waitMs = Math.max(waitMs, Math.ceil(Math.max(ns.getGrowTime(target), ns.getWeakenTime(target)) + 250));
+    waitMs = Math.max(
+      waitMs,
+      Math.ceil(Math.max(ns.getGrowTime(target), ns.getWeakenTime(target)) + 250)
+    );
   }
 
   if (weakenThreads > 0) {
@@ -345,7 +407,17 @@ function runPrepWave(ns, hosts, targetInfo, growScript, weakenScript) {
   return waitMs;
 }
 
-function runBatchWave(ns, hosts, target, desiredHackPct, spacingMs, hackScript, growScript, weakenScript, candidateInfos) {
+function runBatchWave(
+  ns,
+  hosts,
+  target,
+  desiredHackPct,
+  spacingMs,
+  hackScript,
+  growScript,
+  weakenScript,
+  candidateInfos
+) {
   const hackPctPerThread = ns.hackAnalyze(target);
   if (!Number.isFinite(hackPctPerThread) || hackPctPerThread <= 0) return false;
 
@@ -376,13 +448,21 @@ function runBatchWave(ns, hosts, target, desiredHackPct, spacingMs, hackScript, 
 
   ns.clearLog();
   ns.print(`[overlap] BATCH ${target}`);
-  ns.print(`[overlap] H:${hackThreads} G:${growThreads} W1:${weakenHackThreads} W2:${weakenGrowThreads}`);
-  ns.print(`[overlap] Hosts:${hosts.length} Free:${formatRam(totalFreeRam)} BatchRAM:${formatRam(ramPerBatch)} Concurrency:${concurrentBatches}`);
+  ns.print(
+    `[overlap] H:${hackThreads} G:${growThreads} W1:${weakenHackThreads} W2:${weakenGrowThreads}`
+  );
+  ns.print(
+    `[overlap] Hosts:${hosts.length} Free:${formatRam(totalFreeRam)} BatchRAM:${formatRam(
+      ramPerBatch
+    )} Concurrency:${concurrentBatches}`
+  );
 
   if (Array.isArray(candidateInfos)) {
     for (const t of candidateInfos.slice(0, 6)) {
       ns.print(
-        `[overlap] cand ${t.host.padEnd(16)} money=${pct(t.moneyRatio).padStart(4)} sec+${t.secAboveMin.toFixed(2).padStart(6)} estWaves=${String(t.prepWaves).padStart(3)}`
+        `[overlap] cand ${t.host.padEnd(18)} money=${pct(t.moneyRatio).padStart(4)} sec+${t.secAboveMin
+          .toFixed(2)
+          .padStart(6)} estWaves=${String(t.prepWaves).padStart(3)}`
       );
     }
   }
@@ -469,7 +549,7 @@ function normalizeScriptName(name) {
 
 function scriptNameMatches(name, candidates) {
   const normalized = normalizeScriptName(name);
-  return candidates.some(candidate => normalizeScriptName(candidate) === normalized);
+  return candidates.some((candidate) => normalizeScriptName(candidate) === normalized);
 }
 
 function formatRam(n) {
