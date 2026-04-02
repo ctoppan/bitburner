@@ -14,7 +14,7 @@ export async function main(ns) {
   let currentTarget = null
 
   while (true) {
-    const target = pickBestTarget(ns, scanTop)
+    let target = pickBestTarget(ns, scanTop)
 
     if (!target) {
       ns.print("[overlap] No valid target")
@@ -23,9 +23,28 @@ export async function main(ns) {
     }
 
     if (target !== currentTarget) {
-      ns.print(`[overlap] Switching target -> ${target}`)
-      killWorkers(ns, hackScript, growScript, weakenScript)
-      currentTarget = target
+      if (currentTarget !== null) {
+        const currentMoney = ns.getServerMoneyAvailable(currentTarget)
+        const currentMaxMoney = ns.getServerMaxMoney(currentTarget)
+        const currentSec = ns.getServerSecurityLevel(currentTarget)
+        const currentMinSec = ns.getServerMinSecurityLevel(currentTarget)
+
+        const currentStillGood =
+          currentMaxMoney > 0 &&
+          currentMoney >= currentMaxMoney * 0.8 &&
+          currentSec <= currentMinSec + 3
+
+        if (currentStillGood) {
+          target = currentTarget
+        } else {
+          ns.print(`[overlap] Switching target -> ${target}`)
+          killWorkers(ns, hackScript, growScript, weakenScript)
+          currentTarget = target
+        }
+      } else {
+        ns.print(`[overlap] Switching target -> ${target}`)
+        currentTarget = target
+      }
     }
 
     await deployFiles(ns, [hackScript, growScript, weakenScript], reserveHome)
@@ -78,6 +97,7 @@ async function prepIfNeeded(ns, target, reserveHome, growScript, weakenScript) {
       if (!secReady) {
         const ram = ns.getScriptRam(weakenScript, host) || 1.75
         const threads = Math.floor(free / ram)
+
         if (threads > 0) {
           const pid = ns.exec(weakenScript, host, threads, target, 0)
           if (pid !== 0) launched++
@@ -85,6 +105,7 @@ async function prepIfNeeded(ns, target, reserveHome, growScript, weakenScript) {
       } else if (!moneyReady) {
         const ram = ns.getScriptRam(growScript, host) || 1.75
         const threads = Math.floor(free / ram)
+
         if (threads > 0) {
           const pid = ns.exec(growScript, host, threads, target, 0)
           if (pid !== 0) launched++
@@ -198,6 +219,7 @@ function scanAll(ns) {
     const node = stack.pop()
     if (seen.has(node)) continue
     seen.add(node)
+
     for (const next of ns.scan(node)) {
       if (!seen.has(next)) stack.push(next)
     }
