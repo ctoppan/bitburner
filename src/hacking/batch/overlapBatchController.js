@@ -51,46 +51,58 @@ async function deployFiles(ns, files, reserveHome) {
 }
 
 async function prepIfNeeded(ns, target, reserveHome, growScript, weakenScript) {
-  const money = ns.getServerMoneyAvailable(target)
-  const maxMoney = ns.getServerMaxMoney(target)
-  const sec = ns.getServerSecurityLevel(target)
-  const minSec = ns.getServerMinSecurityLevel(target)
+  while (true) {
+    const money = ns.getServerMoneyAvailable(target)
+    const maxMoney = ns.getServerMaxMoney(target)
+    const sec = ns.getServerSecurityLevel(target)
+    const minSec = ns.getServerMinSecurityLevel(target)
 
-  const moneyReady = maxMoney > 0 && money >= maxMoney * 0.98
-  const secReady = sec <= minSec + 0.5
+    const moneyReady = maxMoney > 0 && money >= maxMoney * 0.98
+    const secReady = sec <= minSec + 0.5
 
-  if (moneyReady && secReady) return true
+    if (moneyReady && secReady) {
+      ns.print(`[prep] ${target} READY`)
+      return true
+    }
 
-  ns.print(
-    `[prep] ${target} money=${maxMoney > 0 ? ((money / maxMoney) * 100).toFixed(1) : "0.0"}% sec+${(sec - minSec).toFixed(2)}`
-  )
+    ns.print(
+      `[prep] ${target} money=${maxMoney > 0 ? ((money / maxMoney) * 100).toFixed(1) : "0.0"}% sec+${(sec - minSec).toFixed(2)}`
+    )
 
-  let launched = 0
+    let launched = 0
 
-  for (const host of getHosts(ns, reserveHome)) {
-    const free = freeRam(ns, host, reserveHome)
-    if (free < 2) continue
+    for (const host of getHosts(ns, reserveHome)) {
+      const free = freeRam(ns, host, reserveHome)
+      if (free < 2) continue
 
-    if (!secReady) {
-      const ram = ns.getScriptRam(weakenScript, host) || 1.75
-      const threads = Math.floor(free / ram)
-      if (threads > 0) {
-        const pid = ns.exec(weakenScript, host, threads, target, 0)
-        if (pid !== 0) launched++
-      }
-    } else if (!moneyReady) {
-      const ram = ns.getScriptRam(growScript, host) || 1.75
-      const threads = Math.floor(free / ram)
-      if (threads > 0) {
-        const pid = ns.exec(growScript, host, threads, target, 0)
-        if (pid !== 0) launched++
+      if (!secReady) {
+        const ram = ns.getScriptRam(weakenScript, host) || 1.75
+        const threads = Math.floor(free / ram)
+        if (threads > 0) {
+          const pid = ns.exec(weakenScript, host, threads, target, 0)
+          if (pid !== 0) launched++
+        }
+      } else if (!moneyReady) {
+        const ram = ns.getScriptRam(growScript, host) || 1.75
+        const threads = Math.floor(free / ram)
+        if (threads > 0) {
+          const pid = ns.exec(growScript, host, threads, target, 0)
+          if (pid !== 0) launched++
+        }
       }
     }
-  }
 
-  ns.print(`[prep] launched jobs=${launched}`)
-  await ns.sleep(3000)
-  return false
+    ns.print(`[prep] launched jobs=${launched}`)
+
+    if (launched === 0) {
+      await ns.sleep(10000)
+    } else {
+      const waitMs = !secReady
+        ? Math.max(5000, Math.min(15000, ns.getWeakenTime(target) * 0.25))
+        : Math.max(5000, Math.min(15000, ns.getGrowTime(target) * 0.25))
+      await ns.sleep(waitMs)
+    }
+  }
 }
 
 function launchBatches(ns, target, spacing, reserveHome, hackScript, growScript, weakenScript) {
@@ -138,7 +150,17 @@ function pickBestTarget(ns, topN) {
     const minSec = ns.getServerMinSecurityLevel(s)
     const time = ns.getWeakenTime(s)
     const chance = ns.hackAnalyzeChance(s)
-    return { s, score: (money * Math.max(0.01, chance)) / (time * Math.max(1, minSec)) }
+    const moneyNow = ns.getServerMoneyAvailable(s)
+    const secNow = ns.getServerSecurityLevel(s)
+
+    const prepPenalty =
+      Math.max(0.25, moneyNow / Math.max(1, money)) /
+      Math.max(1, secNow - minSec + 1)
+
+    return {
+      s,
+      score: ((money * Math.max(0.01, chance)) / (time * Math.max(1, minSec))) * prepPenalty,
+    }
   })
 
   scored.sort((a, b) => b.score - a.score)
