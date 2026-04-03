@@ -6,7 +6,7 @@ export async function main(ns) {
     const xpSpacing = Number(ns.args[3] ?? 30);
     const moneySpacing = Number(ns.args[4] ?? 80);
     const switchHackLevel = Number(ns.args[5] ?? 2500);
-    const pollMs = Number(ns.args[6] ?? 15000);
+    const pollMs = Number(ns.args[6] ?? 2000);
 
     const controller = "/hacking/batch/overlapBatchController.js";
     const spreadHack = "/hacking/spread-hack.js";
@@ -19,7 +19,11 @@ export async function main(ns) {
     ns.disableLog("scriptKill");
     ns.clearLog();
 
+    killDuplicateOrchestrators(ns);
+
     while (true) {
+        killDuplicateOrchestrators(ns);
+
         const hack = ns.getHackingLevel();
         const inXpPhase = hack < switchHackLevel;
 
@@ -51,21 +55,44 @@ export async function main(ns) {
     }
 }
 
+function killDuplicateOrchestrators(ns) {
+    const me = ns.pid;
+    const self = ns.getScriptName();
+
+    for (const proc of ns.ps("home")) {
+        if (proc.filename === self && proc.pid !== me) {
+            ns.kill(proc.pid);
+        }
+    }
+}
+
 function enforceSingleInstance(ns, script, desiredArgs) {
     if (!ns.fileExists(script, "home")) return;
 
-    const running = ns.ps("home").filter(p => p.filename === script);
+    let running = ns.ps("home").filter(p => p.filename === script);
 
-    // Hard clean:
-    // If anything is off, kill every copy and relaunch exactly one.
-    if (running.length !== 1 || !sameArgs(running[0].args, desiredArgs)) {
-        for (const proc of running) {
-            ns.kill(proc.pid);
+    if (running.length > 1) {
+        for (let i = 1; i < running.length; i++) {
+            ns.kill(running[i].pid);
         }
+    }
 
+    running = ns.ps("home").filter(p => p.filename === script);
+
+    if (running.length === 0) {
         const pid = ns.exec(script, "home", 1, ...desiredArgs);
         if (pid === 0) {
             ns.print(`[orchestrator] FAILED to start ${script} ${desiredArgs.join(" ")}`);
+        }
+        return;
+    }
+
+    const proc = running[0];
+    if (!sameArgs(proc.args, desiredArgs)) {
+        ns.kill(proc.pid);
+        const pid = ns.exec(script, "home", 1, ...desiredArgs);
+        if (pid === 0) {
+            ns.print(`[orchestrator] FAILED to restart ${script} ${desiredArgs.join(" ")}`);
         }
     }
 }

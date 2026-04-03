@@ -5,7 +5,18 @@ export async function main(ns) {
   const spacingArg = Number(ns.args[1] ?? -1)
 
   ns.disableLog("ALL")
-  ns.ui.openTail()
+
+  const lockFile = "/temp/overlapBatchController.lock"
+  const myPid = ns.pid
+
+  if (!acquireLock(ns, lockFile, myPid)) {
+    ns.print("[overlap] Another controller instance is active, exiting")
+    return
+  }
+
+  ns.atExit(() => {
+    releaseLock(ns, lockFile, myPid)
+  })
 
   const hackScript = "/hacking/main/hack.js"
   const growScript = "/hacking/main/grow.js"
@@ -14,6 +25,11 @@ export async function main(ns) {
   let currentTarget = null
 
   while (true) {
+    if (!refreshLock(ns, lockFile, myPid)) {
+      ns.print("[overlap] Lost controller lock, exiting")
+      return
+    }
+
     let target = pickBestTarget(ns, scanTop)
 
     if (!target) {
@@ -49,7 +65,7 @@ export async function main(ns) {
 
     await deployFiles(ns, [hackScript, growScript, weakenScript], reserveHome)
 
-    const ready = await prepIfNeeded(ns, target, reserveHome, growScript, weakenScript)
+    const ready = await prepIfNeeded(ns, target, reserveHome, growScript, weakenScript, lockFile, myPid)
     if (!ready) continue
 
     const weakenTime = ns.getWeakenTime(target)
@@ -69,8 +85,13 @@ async function deployFiles(ns, files, reserveHome) {
   }
 }
 
-async function prepIfNeeded(ns, target, reserveHome, growScript, weakenScript) {
+async function prepIfNeeded(ns, target, reserveHome, growScript, weakenScript, lockFile, myPid) {
   while (true) {
+    if (!refreshLock(ns, lockFile, myPid)) {
+      ns.print("[overlap] Lost controller lock during prep")
+      return false
+    }
+
     const money = ns.getServerMoneyAvailable(target)
     const maxMoney = ns.getServerMaxMoney(target)
     const sec = ns.getServerSecurityLevel(target)
@@ -226,4 +247,65 @@ function scanAll(ns) {
   }
 
   return [...seen]
+}
+
+function acquireLock(ns, lockFile, pid) {
+  try {
+    if (ns.fileExists(lockFile, "home")) {
+      const raw = ns.read(lockFile).trim()
+      const existingPid = Number(raw)
+      if (Number.isFinite(existingPid) && existingPid > 0 && isPidRunningOnHome(ns, existingPid)) {
+        return false
+      }
+      ns.rm(lockFile, "home")
+    }
+
+    ns.write(lockFile, String(pid), "w")
+    const confirm = Number(ns.read(lockFile).trim())
+    return confirm === pid
+  } catch {
+    return false
+  }
+}
+
+function refreshLock(ns, lockFile, pid) {
+  try {
+    if (!ns.fileExists(lockFile, "home")) {
+      ns.write(lockFile, String(pid), "w")
+      return true
+    }
+
+    const raw = ns.read(lockFile).trim()
+    const existingPid = Number(raw)
+
+    if (existingPid === pid) return true
+    if (!Number.isFinite(existingPid) || existingPid <= 0) {
+      ns.write(lockFile, String(pid), "w")
+      return true
+    }
+
+    if (!isPidRunningOnHome(ns, existingPid)) {
+      ns.write(lockFile, String(pid), "w")
+      return true
+    }
+
+    return false
+  } catch {
+    return false
+  }
+}
+
+function releaseLock(ns, lockFile, pid) {
+  try {
+    if (!ns.fileExists(lockFile, "home")) return
+    const raw = ns.read(lockFile).trim()
+    const existingPid = Number(raw)
+    if (existingPid === pid) {
+      ns.rm(lockFile, "home")
+    }
+  } catch {}
+}
+
+function isPidRunningOnHome(ns, pid) {
+  return ns.ps("home").some(p => p.pid === pid)
 }
