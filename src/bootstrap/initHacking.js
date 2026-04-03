@@ -23,13 +23,13 @@ export async function main(ns) {
     const orchestratorArgs = [0.03, 0.08, 1024, 30, 80, 2500, 15000];
 
     ns.tprint(`[${ts()}] Running cleanup with ${killAllScript}`);
-    const killPid = ns.run(killAllScript, 1);
+    const killPid = ns.run(killAllScript, 1, ns.pid);
     if (killPid === 0) {
         ns.tprint(`[${ts()}] ERROR: Failed to start ${killAllScript}`);
         return;
     }
 
-    await ns.sleep(500);
+    await ns.sleep(750);
 
     ns.tprint(
         `[${ts()}] Starting ${orchestrator} ${orchestratorArgs.join(" ")}`

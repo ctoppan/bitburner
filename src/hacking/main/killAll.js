@@ -12,7 +12,7 @@ const scriptsToKillOnHome = [
   "/hacking/batch/batchWeaken.js",
   "/hacking/batch/batchController.js",
   "/hacking/batch/overlapBatchController.js",
-  "/bootstrap/hackOrchestrator.js", // 🔥 also kill orchestrator
+  "/bootstrap/hackOrchestrator.js",
   "/utils/backdoorHelper.js",
   "/xp/xpGrind.js",
   "/xp/xpDistributor.js",
@@ -31,21 +31,23 @@ export async function main(ns) {
     throw new Error("Run the script from home");
   }
 
-  // 🔥 Kill specific scripts on home
+  const myPid = ns.pid;
+  const callerPid = Number(ns.args[0] ?? -1);
+
   for (const script of scriptsToKillOnHome) {
     try {
       ns.scriptKill(script, "home");
     } catch {}
   }
 
-  // 🔥 Also kill ANY leftover processes on home (safety net)
   for (const proc of ns.ps("home")) {
     try {
+      if (proc.pid === myPid) continue;
+      if (proc.pid === callerPid) continue;
       ns.kill(proc.pid);
     } catch {}
   }
 
-  // 🔥 Kill everything on all servers
   const seen = new Set(["home"]);
   const queue = ["home"];
 
