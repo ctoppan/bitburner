@@ -20,19 +20,24 @@ export async function main(ns) {
         return;
     }
 
-    // Important:
-    // initHacking owns startup only.
-    // hackOrchestrator owns overlapBatchController.
-    // Nothing here should launch overlapBatchController directly.
     const orchestratorArgs = [0.03, 0.08, 1024, 30, 80, 2500, 15000];
 
+    ns.tprint(`[${ts()}] Running cleanup with ${killAllScript}`);
+    const killPid = ns.run(killAllScript, 1);
+    if (killPid === 0) {
+        ns.tprint(`[${ts()}] ERROR: Failed to start ${killAllScript}`);
+        return;
+    }
+
+    await ns.sleep(500);
+
     ns.tprint(
-        `[${ts()}] Starting killAll.js -> ${orchestrator} ${orchestratorArgs.join(" ")}`
+        `[${ts()}] Starting ${orchestrator} ${orchestratorArgs.join(" ")}`
     );
 
-    const pid = ns.run(killAllScript, 1, orchestrator, ...orchestratorArgs);
-    if (pid === 0) {
-        ns.tprint(`[${ts()}] ERROR: Failed to start ${killAllScript}`);
+    const orchPid = ns.run(orchestrator, 1, ...orchestratorArgs);
+    if (orchPid === 0) {
+        ns.tprint(`[${ts()}] ERROR: Failed to start ${orchestrator}`);
     }
 }
 
