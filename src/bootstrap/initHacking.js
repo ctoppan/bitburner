@@ -1,28 +1,37 @@
-/** @param {NS} ns */
+/** @param {NS} ns **/
 export async function main(ns) {
-  ns.disableLog("ALL")
+    ns.tprint(`[${ts()}] Starting initHacking.js`);
 
-  const now = () => new Date().toLocaleTimeString()
+    const repoStarter = "/bootstrap/start-download-only.js";
+    if (ns.fileExists(repoStarter, "home")) {
+        ns.tprint(`[${ts()}] Repo sync already handled by start-download-only.js`);
+    }
 
-  const orchestratorArgs = [0.03, 0.08, 1024, 30, 80, 2500, 15000]
-  const orchestratorScript = "/bootstrap/hackOrchestrator.js"
-  const killAllScript = "/hacking/main/killAll.js"
+    const killAllScript = "/hacking/main/killAll.js";
+    const orchestrator = "/bootstrap/hackOrchestrator.js";
 
-  ns.tprint(`[${now()}] Starting initHacking.js`)
-  ns.tprint(`[${now()}] Repo sync already completed by start-download-only.js`)
-  ns.tprint(
-    `[${now()}] Starting killAll.js -> ${orchestratorScript} ${orchestratorArgs.join(" ")}`,
-  )
+    if (!ns.fileExists(killAllScript, "home")) {
+        ns.tprint(`[${ts()}] ERROR: Missing ${killAllScript}`);
+        return;
+    }
 
-  if (!ns.fileExists(killAllScript, "home")) {
-    ns.tprint(`[${now()}] ERROR: Missing ${killAllScript}`)
-    return
-  }
+    if (!ns.fileExists(orchestrator, "home")) {
+        ns.tprint(`[${ts()}] ERROR: Missing ${orchestrator}`);
+        return;
+    }
 
-  if (!ns.fileExists(orchestratorScript, "home")) {
-    ns.tprint(`[${now()}] ERROR: Missing ${orchestratorScript}`)
-    return
-  }
+    // Important:
+    // initHacking should never launch overlapBatchController directly.
+    // The orchestrator is the only owner of that script now.
+    const orchestratorArgs = [0.03, 0.08, 1024, 30, 80, 2500, 15000];
 
-  ns.spawn(killAllScript, 1, orchestratorScript, ...orchestratorArgs)
+    ns.tprint(
+        `[${ts()}] Starting killAll.js -> ${orchestrator} ${orchestratorArgs.join(" ")}`
+    );
+
+    ns.run(killAllScript, 1, orchestrator, ...orchestratorArgs);
+}
+
+function ts() {
+    return new Date().toLocaleTimeString();
 }
