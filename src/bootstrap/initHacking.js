@@ -4,7 +4,7 @@ export async function main(ns) {
 
     const repoStarter = "/bootstrap/start-download-only.js";
     if (ns.fileExists(repoStarter, "home")) {
-        ns.tprint(`[${ts()}] Repo sync already handled by start-download-only.js`);
+        ns.tprint(`[${ts()}] Repo sync already completed by start-download-only.js`);
     }
 
     const killAllScript = "/hacking/main/killAll.js";
@@ -21,15 +21,19 @@ export async function main(ns) {
     }
 
     // Important:
-    // initHacking should never launch overlapBatchController directly.
-    // The orchestrator is the only owner of that script now.
+    // initHacking owns startup only.
+    // hackOrchestrator owns overlapBatchController.
+    // Nothing here should launch overlapBatchController directly.
     const orchestratorArgs = [0.03, 0.08, 1024, 30, 80, 2500, 15000];
 
     ns.tprint(
         `[${ts()}] Starting killAll.js -> ${orchestrator} ${orchestratorArgs.join(" ")}`
     );
 
-    ns.run(killAllScript, 1, orchestrator, ...orchestratorArgs);
+    const pid = ns.run(killAllScript, 1, orchestrator, ...orchestratorArgs);
+    if (pid === 0) {
+        ns.tprint(`[${ts()}] ERROR: Failed to start ${killAllScript}`);
+    }
 }
 
 function ts() {

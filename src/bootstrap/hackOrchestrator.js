@@ -30,21 +30,21 @@ export async function main(ns) {
         enforceSingleInstance(ns, controller, desiredControllerArgs);
 
         if (inXpPhase) {
-            startIfPresent(ns, spreadHack, []);
-            startIfPresent(ns, xpGrind, []);
-            startIfPresent(ns, xpDistributor, []);
+            startIfMissing(ns, spreadHack, []);
+            startIfMissing(ns, xpGrind, []);
+            startIfMissing(ns, xpDistributor, []);
         } else {
             stopAllByScript(ns, spreadHack);
             stopAllByScript(ns, xpGrind);
             stopAllByScript(ns, xpDistributor);
         }
 
+        const controllerCount = ns.ps("home").filter(p => p.filename === controller).length;
+
         ns.clearLog();
         ns.print(`[orchestrator] phase=${inXpPhase ? "XP" : "MONEY"}`);
         ns.print(`[orchestrator] hack=${ns.formatNumber(hack, 3)} switch=${ns.formatNumber(switchHackLevel, 3)}`);
         ns.print(`[orchestrator] controller=${controller} ${desiredControllerArgs.join(" ")}`);
-
-        const controllerCount = ns.ps("home").filter(p => p.filename === controller).length;
         ns.print(`[orchestrator] controllerCount=${controllerCount}`);
 
         await ns.sleep(pollMs);
@@ -56,24 +56,30 @@ function enforceSingleInstance(ns, script, desiredArgs) {
 
     const running = ns.ps("home").filter(p => p.filename === script);
 
-    if (running.length === 1 && sameArgs(running[0].args, desiredArgs)) {
-        return;
-    }
+    // Hard clean:
+    // If anything is off, kill every copy and relaunch exactly one.
+    if (running.length !== 1 || !sameArgs(running[0].args, desiredArgs)) {
+        for (const proc of running) {
+            ns.kill(proc.pid);
+        }
 
-    for (const proc of running) {
-        ns.kill(proc.pid);
+        const pid = ns.exec(script, "home", 1, ...desiredArgs);
+        if (pid === 0) {
+            ns.print(`[orchestrator] FAILED to start ${script} ${desiredArgs.join(" ")}`);
+        }
     }
-
-    ns.exec(script, "home", 1, ...desiredArgs);
 }
 
-function startIfPresent(ns, script, args) {
+function startIfMissing(ns, script, args) {
     if (!ns.fileExists(script, "home")) return;
 
     const running = ns.ps("home").filter(p => p.filename === script);
     if (running.length > 0) return;
 
-    ns.exec(script, "home", 1, ...args);
+    const pid = ns.exec(script, "home", 1, ...args);
+    if (pid === 0) {
+        ns.print(`[orchestrator] FAILED to start ${script} ${args.join(" ")}`);
+    }
 }
 
 function stopAllByScript(ns, script) {
@@ -85,8 +91,10 @@ function stopAllByScript(ns, script) {
 
 function sameArgs(actual, desired) {
     if (actual.length !== desired.length) return false;
+
     for (let i = 0; i < actual.length; i++) {
         if (String(actual[i]) !== String(desired[i])) return false;
     }
+
     return true;
 }

@@ -12,41 +12,45 @@ const scriptsToKillOnHome = [
   "/hacking/batch/batchWeaken.js",
   "/hacking/batch/batchController.js",
   "/hacking/batch/overlapBatchController.js",
+  "/bootstrap/hackOrchestrator.js", // 🔥 also kill orchestrator
   "/utils/backdoorHelper.js",
   "/xp/xpGrind.js",
   "/xp/xpDistributor.js",
   "/xp/stopXpGrind.js",
 ];
 
-function localeHHMMSS(ms = 0) {
-  if (!ms) ms = Date.now();
-  return new Date(ms).toLocaleTimeString();
+function ts() {
+  return new Date().toLocaleTimeString();
 }
 
 /** @param {NS} ns **/
 export async function main(ns) {
-  ns.tprint(`[${localeHHMMSS()}] Starting killAll.js`);
-
-  const scriptToRunAfter = String(ns.args[0] ?? "/hacking/batch/overlapBatchController.js");
-  const scriptArgs = ns.args.slice(1);
+  ns.tprint(`[${ts()}] Starting killAll.js`);
 
   if (ns.getHostname() !== "home") {
     throw new Error("Run the script from home");
   }
 
+  // 🔥 Kill specific scripts on home
   for (const script of scriptsToKillOnHome) {
     try {
-      ns.kill(script, "home");
+      ns.scriptKill(script, "home");
     } catch {}
   }
 
+  // 🔥 Also kill ANY leftover processes on home (safety net)
+  for (const proc of ns.ps("home")) {
+    try {
+      ns.kill(proc.pid);
+    } catch {}
+  }
+
+  // 🔥 Kill everything on all servers
   const seen = new Set(["home"]);
   const queue = ["home"];
-  const servers = [];
 
   while (queue.length > 0) {
     const host = queue.shift();
-    servers.push(host);
 
     for (const next of ns.scan(host)) {
       if (!seen.has(next)) {
@@ -56,7 +60,7 @@ export async function main(ns) {
     }
   }
 
-  for (const host of servers) {
+  for (const host of seen) {
     if (host === "home") continue;
     if (!ns.serverExists(host)) continue;
 
@@ -65,16 +69,5 @@ export async function main(ns) {
     } catch {}
   }
 
-  ns.tprint(`[${localeHHMMSS()}] All remote processes killed`);
-
-  if (!ns.fileExists(scriptToRunAfter, "home")) {
-    ns.tprint(`[${localeHHMMSS()}] ERROR: Missing ${scriptToRunAfter}`);
-    return;
-  }
-
-  ns.tprint(
-    `[${localeHHMMSS()}] Spawning ${scriptToRunAfter}${scriptArgs.length ? ` ${scriptArgs.join(" ")}` : ""}`
-  );
-
-  ns.spawn(scriptToRunAfter, 1, ...scriptArgs);
+  ns.tprint(`[${ts()}] All processes killed`);
 }
