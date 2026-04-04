@@ -6,8 +6,7 @@ export async function main(ns) {
 
   ns.disableLog("ALL")
 
-  // Simple singleton guard:
-  // if another copy is already running on home, exit immediately.
+  // Simple singleton guard
   const me = ns.pid
   const others = ns.ps("home").filter(
     p => p.filename === ns.getScriptName() && p.pid !== me
@@ -24,12 +23,11 @@ export async function main(ns) {
   let currentTarget = null
 
   while (true) {
-    // Re-check singleton status periodically so duplicates self-destruct
+    // Duplicate self-check
     const duplicates = ns.ps("home").filter(
       p => p.filename === ns.getScriptName() && p.pid !== ns.pid
     )
     if (duplicates.length > 0) {
-      // Keep the lowest PID alive, others exit
       const all = [...duplicates.map(d => d.pid), ns.pid].sort((a, b) => a - b)
       if (all[0] !== ns.pid) {
         ns.print("[overlap] Duplicate controller detected, exiting")
@@ -183,32 +181,97 @@ function launchBatches(ns, target, spacing, reserveHome, hackScript, growScript,
 }
 
 function pickBestTarget(ns, topN) {
+  const hackLevel = ns.getHackingLevel()
+
+  // Hard tiering by late-game progression
+  let minMoney = 0
+  if (hackLevel >= 500) minMoney = 1e9
+  if (hackLevel >= 1200) minMoney = 5e9
+  if (hackLevel >= 2500) minMoney = 1e10
+  if (hackLevel >= 4000) minMoney = 2e10
+  if (hackLevel >= 5500) minMoney = 4e10
+
+  let maxReqHackRatio = 1.00
+  if (hackLevel >= 2500) maxReqHackRatio = 0.95
+  if (hackLevel >= 4000) maxReqHackRatio = 0.90
+  if (hackLevel >= 5500) maxReqHackRatio = 0.85
+
+  const maxAllowedReqHack = hackLevel * maxReqHackRatio
+
   const servers = scanAll(ns)
     .filter((s) => s !== "home")
     .filter((s) => ns.hasRootAccess(s))
     .filter((s) => ns.getServerMaxMoney(s) > 0)
-    .filter((s) => ns.getServerRequiredHackingLevel(s) <= ns.getHackingLevel())
+    .filter((s) => ns.getServerRequiredHackingLevel(s) <= maxAllowedReqHack)
+    .filter((s) => ns.getServerMaxMoney(s) >= minMoney)
+
+  if (servers.length === 0) {
+    // fallback if hard tiering filters too much
+    const fallback = scanAll(ns)
+      .filter((s) => s !== "home")
+      .filter((s) => ns.hasRootAccess(s))
+      .filter((s) => ns.getServerMaxMoney(s) > 0)
+      .filter((s) => ns.getServerRequiredHackingLevel(s) <= hackLevel)
+
+    if (fallback.length === 0) return null
+
+    return fallback
+      .sort((a, b) => ns.getServerMaxMoney(b) - ns.getServerMaxMoney(a))[0]
+  }
 
   const scored = servers.map((s) => {
-    const money = ns.getServerMaxMoney(s)
+    const maxMoney = ns.getServerMaxMoney(s)
     const minSec = ns.getServerMinSecurityLevel(s)
-    const time = ns.getWeakenTime(s)
-    const chance = ns.hackAnalyzeChance(s)
+    const weakenTime = ns.getWeakenTime(s)
+    const chance = Math.max(0.01, ns.hackAnalyzeChance(s))
+    const reqHack = ns.getServerRequiredHackingLevel(s)
+
     const moneyNow = ns.getServerMoneyAvailable(s)
     const secNow = ns.getServerSecurityLevel(s)
 
-    const prepPenalty =
-      Math.max(0.25, moneyNow / Math.max(1, money)) /
-      Math.max(1, secNow - minSec + 1)
+    const moneyRatio = maxMoney > 0 ? moneyNow / maxMoney : 0
+    const secPenalty = Math.max(1, secNow - minSec + 1)
+
+    // Strong rich-server bias
+    const valueScore = Math.pow(maxMoney, 1.0)
+
+    // Still account for efficiency, but not enough for foodnstuff to win
+    const efficiencyScore =
+      (chance * valueScore) /
+      (Math.pow(weakenTime, 0.45) * Math.pow(Math.max(1, minSec), 0.30))
+
+    // Prefer already-prepped servers, but don't overpunish rich ones
+    const prepScore =
+      Math.max(0.40, moneyRatio) /
+      Math.pow(secPenalty, 0.55)
+
+    // Small reward for tougher late-game servers, but capped
+    const levelFit = 1 + Math.min(0.25, reqHack / Math.max(1, hackLevel))
 
     return {
       s,
-      score: ((money * Math.max(0.01, chance)) / (time * Math.max(1, minSec))) * prepPenalty,
+      score: efficiencyScore * prepScore * levelFit,
+      maxMoney,
+      weakenTime,
+      chance,
+      reqHack,
     }
   })
 
   scored.sort((a, b) => b.score - a.score)
-  return scored.slice(0, topN)[0]?.s ?? null
+
+  const finalists = scored.slice(0, Math.max(1, topN))
+
+  // If scores are close, prefer the richer server.
+  finalists.sort((a, b) => {
+    const scoreDiff = Math.abs(a.score - b.score) / Math.max(1e-9, Math.max(a.score, b.score))
+    if (scoreDiff < 0.20) {
+      return b.maxMoney - a.maxMoney
+    }
+    return b.score - a.score
+  })
+
+  return finalists[0]?.s ?? null
 }
 
 function getHosts(ns, reserveHome) {
