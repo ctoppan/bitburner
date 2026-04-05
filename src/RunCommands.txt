@@ -1,0 +1,18 @@
+
+run hacking/batch/overlapBatchController.js 0.08 80 1024 25
+run hacking/playerServers.js
+run gang/gangManager_v2.js 150e9 money rep
+
+run hacking/batch/overlapBatchController.js 0.08 80 1024 25
+run hacking/playerServers.js
+run gang/gangManager_v2.js 150e9 money rep
+
+
+run share/share-manager.js
+
+
+
+run ls/resetAdvisor.js 1e12 500e9 2500
+
+run stockmarket/stockTrader.js 0.35 50e9 0.15 0.05 6000
+run stockmarket/stockTrader.js
