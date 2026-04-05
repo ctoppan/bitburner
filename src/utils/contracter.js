@@ -15,9 +15,7 @@ function getItem(key) {
 }
 
 function localeHHMMSS(ms = 0) {
-  if (!ms) {
-    ms = Date.now()
-  }
+  if (!ms) ms = Date.now()
   return new Date(ms).toLocaleTimeString()
 }
 
@@ -126,6 +124,29 @@ const codingContractTypesMetadata = [
     },
   },
   {
+    name: "Array Jumping Game II",
+    solver: function (data) {
+      if (data.length <= 1) return 0
+
+      let jumps = 0
+      let currentEnd = 0
+      let farthest = 0
+
+      for (let i = 0; i < data.length - 1; i++) {
+        farthest = Math.max(farthest, i + data[i])
+
+        if (i === currentEnd) {
+          if (farthest <= i) return 0
+          jumps++
+          currentEnd = farthest
+          if (currentEnd >= data.length - 1) return jumps
+        }
+      }
+
+      return currentEnd >= data.length - 1 ? jumps : 0
+    },
+  },
+  {
     name: "Merge Overlapping Intervals",
     solver: function (data) {
       const intervals = data.slice()
@@ -220,9 +241,7 @@ const codingContractTypesMetadata = [
       const prices = data[1]
       const len = prices.length
 
-      if (len < 2) {
-        return 0
-      }
+      if (len < 2) return 0
 
       if (k > len / 2) {
         let res = 0
@@ -273,9 +292,7 @@ const codingContractTypesMetadata = [
       const m = data[1]
       const currentRow = []
       currentRow.length = n
-      for (let i = 0; i < n; i++) {
-        currentRow[i] = 1
-      }
+      for (let i = 0; i < n; i++) currentRow[i] = 1
       for (let row = 1; row < m; row++) {
         for (let i = 1; i < n; i++) {
           currentRow[i] += currentRow[i - 1]
@@ -311,6 +328,48 @@ const codingContractTypesMetadata = [
     },
   },
   {
+    name: "Shortest Path in a Grid",
+    solver: function (data) {
+      const rows = data.length
+      const cols = data[0].length
+      if (data[0][0] !== 0 || data[rows - 1][cols - 1] !== 0) return ""
+
+      const dirs = [
+        [1, 0, "D"],
+        [-1, 0, "U"],
+        [0, 1, "R"],
+        [0, -1, "L"],
+      ]
+
+      const seen = Array.from({ length: rows }, () => Array(cols).fill(false))
+      const queue = [[0, 0, ""]]
+      seen[0][0] = true
+
+      for (let i = 0; i < queue.length; i++) {
+        const [r, c, path] = queue[i]
+        if (r === rows - 1 && c === cols - 1) return path
+
+        for (const [dr, dc, move] of dirs) {
+          const nr = r + dr
+          const nc = c + dc
+          if (
+            nr >= 0 &&
+            nr < rows &&
+            nc >= 0 &&
+            nc < cols &&
+            !seen[nr][nc] &&
+            data[nr][nc] === 0
+          ) {
+            seen[nr][nc] = true
+            queue.push([nr, nc, path + move])
+          }
+        }
+      }
+
+      return ""
+    },
+  },
+  {
     name: "Sanitize Parentheses in Expression",
     solver: function (data) {
       let left = 0
@@ -329,9 +388,7 @@ const codingContractTypesMetadata = [
         if (s.length === index) {
           if (left === 0 && right === 0 && pair === 0) {
             for (let i = 0; i < res.length; i++) {
-              if (res[i] === solution) {
-                return
-              }
+              if (res[i] === solution) return
             }
             res.push(solution)
           }
@@ -339,9 +396,7 @@ const codingContractTypesMetadata = [
         }
 
         if (s[index] === "(") {
-          if (left > 0) {
-            dfs(pair, index + 1, left - 1, right, s, solution, res)
-          }
+          if (left > 0) dfs(pair, index + 1, left - 1, right, s, solution, res)
           dfs(pair + 1, index + 1, left, right, s, solution + s[index], res)
         } else if (s[index] === ")") {
           if (right > 0) dfs(pair, index + 1, left, right - 1, s, solution, res)
@@ -363,17 +418,13 @@ const codingContractTypesMetadata = [
 
       function helper(res, path, num, target, pos, evaluated, multed) {
         if (pos === num.length) {
-          if (target === evaluated) {
-            res.push(path)
-          }
+          if (target === evaluated) res.push(path)
           return
         }
 
         for (let i = pos; i < num.length; ++i) {
-          if (i != pos && num[pos] == "0") {
-            break
-          }
-          const cur = parseInt(num.substring(pos, i + 1))
+          if (i != pos && num[pos] == "0") break
+          const cur = parseInt(num.substring(pos, i + 1), 10)
           if (pos === 0) {
             helper(res, path + cur, num, target, i + 1, cur, cur)
           } else {
@@ -384,9 +435,7 @@ const codingContractTypesMetadata = [
         }
       }
 
-      if (num == null || num.length === 0) {
-        return []
-      }
+      if (num == null || num.length === 0) return []
 
       const result = []
       helper(result, "", num, target, 0, 0, 0)
@@ -397,14 +446,10 @@ const codingContractTypesMetadata = [
     name: "Square Root",
     solver: function (data) {
       const n = BigInt(data)
-
-      if (n < 2n) {
-        return n.toString()
-      }
+      if (n < 2n) return n.toString()
 
       let x0 = n
       let x1 = (x0 + 1n) >> 1n
-
       while (x1 < x0) {
         x0 = x1
         x1 = (x1 + n / x1) >> 1n
@@ -416,6 +461,76 @@ const codingContractTypesMetadata = [
       const highDiff = high * high - n
 
       return (lowDiff <= highDiff ? low : high).toString()
+    },
+  },
+  {
+    name: "HammingCodes: Integer to Encoded Binary",
+    solver: function (data) {
+      const dataBits = BigInt(data).toString(2).split("").map((x) => Number(x))
+
+      let parityCount = 0
+      while ((1 << parityCount) < dataBits.length + parityCount + 1) {
+        parityCount++
+      }
+
+      const encoding = Array(parityCount + dataBits.length + 1).fill(0)
+
+      let dataIndex = 0
+      for (let i = 1; i < encoding.length; i++) {
+        if ((i & (i - 1)) !== 0) {
+          encoding[i] = dataBits[dataIndex++]
+        }
+      }
+
+      let parityXor = 0
+      for (let i = 1; i < encoding.length; i++) {
+        if (encoding[i] === 1) parityXor ^= i
+      }
+
+      for (let p = 1; p < encoding.length; p <<= 1) {
+        encoding[p] = (parityXor & p) !== 0 ? 1 : 0
+      }
+
+      let overallParity = 0
+      for (let i = 1; i < encoding.length; i++) {
+        overallParity ^= encoding[i]
+      }
+      encoding[0] = overallParity
+
+      return encoding.join("")
+    },
+  },
+  {
+    name: "HammingCodes: Encoded Binary to Integer",
+    solver: function (data) {
+      const bits = data.split("").map((x) => Number(x))
+
+      let errorPos = 0
+      for (let i = 1; i < bits.length; i++) {
+        if (bits[i] === 1) errorPos ^= i
+      }
+
+      let overallParity = 0
+      for (let i = 0; i < bits.length; i++) {
+        overallParity ^= bits[i]
+      }
+
+      if (overallParity === 1) {
+        if (errorPos === 0) {
+          bits[0] ^= 1
+        } else if (errorPos < bits.length) {
+          bits[errorPos] ^= 1
+        }
+      }
+
+      let out = ""
+      for (let i = 1; i < bits.length; i++) {
+        if ((i & (i - 1)) !== 0) {
+          out += String(bits[i])
+        }
+      }
+
+      return BigInt("0b" + out).toString()
     },
   },
   {
@@ -449,9 +564,7 @@ const codingContractTypesMetadata = [
   {
     name: "Compression I: RLE Compression",
     solver: function (data) {
-      if (!data || data.length === 0) {
-        return ""
-      }
+      if (!data || data.length === 0) return ""
 
       let out = ""
       let i = 0
@@ -477,6 +590,39 @@ const codingContractTypesMetadata = [
       return out
     },
   },
+  {
+    name: "Compression II: LZ Decompression",
+    solver: function (data) {
+      let out = ""
+      let i = 0
+      let isLiteral = true
+
+      while (i < data.length) {
+        const len = Number(data[i])
+        i++
+
+        if (len === 0) {
+          isLiteral = !isLiteral
+          continue
+        }
+
+        if (isLiteral) {
+          out += data.slice(i, i + len)
+          i += len
+        } else {
+          const offset = Number(data[i])
+          i++
+          for (let j = 0; j < len; j++) {
+            out += out[out.length - offset]
+          }
+        }
+
+        isLiteral = !isLiteral
+      }
+
+      return out
+    },
+  },
 ]
 
 const knownContractTypes = new Set(codingContractTypesMetadata.map((x) => x.name))
@@ -487,9 +633,7 @@ function findSolver(type) {
 
 function findAnswer(contract) {
   const solverEntry = findSolver(contract.type)
-  if (!solverEntry) {
-    return null
-  }
+  if (!solverEntry) return null
   return solverEntry.solver(contract.data)
 }
 
@@ -576,14 +720,10 @@ export async function main(ns) {
 
   Object.keys(serverMap.servers).forEach((targetHost) => {
     const files = ns.ls(targetHost)
-    if (!files || !files.length) {
-      return
-    }
+    if (!files || !files.length) return
 
     const contracts = files.filter((file) => file.endsWith(".cct"))
-    if (!contracts.length) {
-      return
-    }
+    if (!contracts.length) return
 
     contracts.forEach((contractFile) => {
       const type = ns.codingcontract.getContractType(contractFile, targetHost)

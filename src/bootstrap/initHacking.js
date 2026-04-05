@@ -2,25 +2,19 @@
 export async function main(ns) {
     ns.tprint(`[${ts()}] Starting initHacking.js`);
 
-    const repoStarter = "/bootstrap/start-download-only.js";
-    if (ns.fileExists(repoStarter, "home")) {
-        ns.tprint(`[${ts()}] Repo sync already completed by start-download-only.js`);
-    }
-
     const killAllScript = "/hacking/main/killAll.js";
-    const orchestrator = "/bootstrap/hackOrchestrator.js";
+    const xpDistributor = "/xp/xpDistributor.js";
+    const gangManager = "/gang/gangManager_v2.js";
 
     if (!ns.fileExists(killAllScript, "home")) {
         ns.tprint(`[${ts()}] ERROR: Missing ${killAllScript}`);
         return;
     }
 
-    if (!ns.fileExists(orchestrator, "home")) {
-        ns.tprint(`[${ts()}] ERROR: Missing ${orchestrator}`);
+    if (!ns.fileExists(xpDistributor, "home")) {
+        ns.tprint(`[${ts()}] ERROR: Missing ${xpDistributor}`);
         return;
     }
-
-    const orchestratorArgs = [0.03, 0.08, 1024, 30, 80, 2500, 15000];
 
     ns.tprint(`[${ts()}] Running cleanup with ${killAllScript}`);
     const killPid = ns.run(killAllScript, 1, ns.pid);
@@ -29,15 +23,23 @@ export async function main(ns) {
         return;
     }
 
-    await ns.sleep(750);
+    await ns.sleep(1000);
 
-    ns.tprint(
-        `[${ts()}] Starting ${orchestrator} ${orchestratorArgs.join(" ")}`
-    );
+    ns.tprint(`[${ts()}] Starting ${xpDistributor} n00dles 512 true`);
+    const xpPid = ns.run(xpDistributor, 1, "n00dles", 512, true);
+    if (xpPid === 0) {
+        ns.tprint(`[${ts()}] ERROR: Failed to start ${xpDistributor}`);
+    }
 
-    const orchPid = ns.run(orchestrator, 1, ...orchestratorArgs);
-    if (orchPid === 0) {
-        ns.tprint(`[${ts()}] ERROR: Failed to start ${orchestrator}`);
+    if (ns.fileExists(gangManager, "home")) {
+        await ns.sleep(250);
+        ns.tprint(`[${ts()}] Starting ${gangManager} 150e9 money rep`);
+        const gangPid = ns.run(gangManager, 1, 150e9, "money", "rep");
+        if (gangPid === 0) {
+            ns.tprint(`[${ts()}] WARNING: Failed to start ${gangManager}`);
+        }
+    } else {
+        ns.tprint(`[${ts()}] Skipping gang manager, file missing`);
     }
 }
 
