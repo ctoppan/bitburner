@@ -6,13 +6,14 @@ export async function main(ns) {
   }
 
   const owner = "ctoppan";
-  const repo = "bitburner";
-  const branch = "master";
+  const repo = "bitburner-automation";
+  const branch = "sf4-starter";
   const srcPrefix = "src/";
 
   const treeApi = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
   const manifestFile = "/temp/github-tree.json";
 
+  printBanner(ns, owner, repo, branch, "start-download-only.js");
   ns.tprint(`[downloader] Fetching repo tree from GitHub...`);
 
   if (ns.fileExists(manifestFile, "home")) {
@@ -44,12 +45,13 @@ export async function main(ns) {
   }
 
   const files = manifest.tree
-    .filter(entry =>
-      entry.type === "blob" &&
-      entry.path.startsWith(srcPrefix) &&
-      entry.path.endsWith(".js")
+    .filter(
+      (entry) =>
+        entry.type === "blob" &&
+        entry.path.startsWith(srcPrefix) &&
+        entry.path.endsWith(".js")
     )
-    .map(entry => entry.path)
+    .map((entry) => entry.path)
     .sort();
 
   if (files.length === 0) {
@@ -63,7 +65,7 @@ export async function main(ns) {
   let failCount = 0;
 
   for (const path of files) {
-    const relativePath = path.slice(srcPrefix.length); // keeps subfolders under src
+    const relativePath = path.slice(srcPrefix.length);
     const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}?ts=${Date.now()}`;
 
     if (ns.fileExists(relativePath, "home")) {
@@ -94,4 +96,12 @@ export async function main(ns) {
       ns.tprint(`[downloader] Skipping launch. Missing ${nextScript}`);
     }
   }
+}
+
+function printBanner(ns, owner, repo, branch, source) {
+  ns.tprint("=".repeat(60));
+  ns.tprint(`[bootstrap] ${source}`);
+  ns.tprint(`[bootstrap] repo   : ${owner}/${repo}`);
+  ns.tprint(`[bootstrap] branch : ${branch}`);
+  ns.tprint("=".repeat(60));
 }

@@ -19,7 +19,7 @@ Paste:
 ```js
 /** @param {NS} ns */
 export async function main(ns) {
-  const url = "https://raw.githubusercontent.com/ctoppan/bitburner/master/src/bootstrap/start.js"
+  const url = "https://raw.githubusercontent.com/ctoppan/bitburner-automation/sf4-starter/src/bootstrap/start.js"
   const file = "bootstrap/start.js"
 
   await ns.wget(`${url}?ts=${Date.now()}`, file)
