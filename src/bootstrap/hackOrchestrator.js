@@ -13,13 +13,12 @@ export async function main(ns) {
     const xpGrind = "/xp/xpGrind.js";
     const xpDistributor = "/xp/xpDistributor.js";
 
-    ns.disableLog("sleep");
-    ns.disableLog("exec");
-    ns.disableLog("kill");
-    ns.disableLog("scriptKill");
+    ns.disableLog("ALL");
     ns.clearLog();
 
     killDuplicateOrchestrators(ns);
+
+    let lastPurchasedCount = -1;
 
     while (true) {
         killDuplicateOrchestrators(ns);
@@ -31,7 +30,15 @@ export async function main(ns) {
             ? [xpHackPct, -1, homeReserveRam, xpSpacing]
             : [moneyHackPct, moneySpacing, homeReserveRam, 25];
 
-        enforceSingleInstance(ns, controller, desiredControllerArgs);
+        const purchasedNow = ns.getPurchasedServers().length;
+        const purchasedChanged = purchasedNow !== lastPurchasedCount;
+
+        if (purchasedChanged) {
+            ns.print(`[orchestrator] Detected pserv change: ${lastPurchasedCount} → ${purchasedNow}`);
+            lastPurchasedCount = purchasedNow;
+        }
+
+        enforceController(ns, controller, desiredControllerArgs, purchasedChanged);
 
         if (inXpPhase) {
             startIfMissing(ns, spreadHack, []);
@@ -43,15 +50,39 @@ export async function main(ns) {
             stopAllByScript(ns, xpDistributor);
         }
 
-        const controllerCount = ns.ps("home").filter(p => p.filename === controller).length;
-
         ns.clearLog();
         ns.print(`[orchestrator] phase=${inXpPhase ? "XP" : "MONEY"}`);
         ns.print(`[orchestrator] hack=${ns.formatNumber(hack, 3)} switch=${ns.formatNumber(switchHackLevel, 3)}`);
-        ns.print(`[orchestrator] controller=${controller} ${desiredControllerArgs.join(" ")}`);
-        ns.print(`[orchestrator] controllerCount=${controllerCount}`);
+        ns.print(`[orchestrator] pservs=${purchasedNow}`);
+        ns.print(`[orchestrator] controller args=${desiredControllerArgs.join(" ")}`);
 
         await ns.sleep(pollMs);
+    }
+}
+
+function enforceController(ns, script, desiredArgs, forceRestart) {
+    if (!ns.fileExists(script, "home")) return;
+
+    let running = ns.ps("home").filter(p => p.filename === script);
+
+    if (running.length > 1) {
+        for (let i = 1; i < running.length; i++) {
+            ns.kill(running[i].pid);
+        }
+    }
+
+    running = ns.ps("home").filter(p => p.filename === script);
+
+    if (running.length === 0) {
+        ns.exec(script, "home", 1, ...desiredArgs);
+        return;
+    }
+
+    const proc = running[0];
+
+    if (forceRestart || !sameArgs(proc.args, desiredArgs)) {
+        ns.kill(proc.pid);
+        ns.exec(script, "home", 1, ...desiredArgs);
     }
 }
 
@@ -66,62 +97,27 @@ function killDuplicateOrchestrators(ns) {
     }
 }
 
-function enforceSingleInstance(ns, script, desiredArgs) {
-    if (!ns.fileExists(script, "home")) return;
-
-    let running = ns.ps("home").filter(p => p.filename === script);
-
-    if (running.length > 1) {
-        for (let i = 1; i < running.length; i++) {
-            ns.kill(running[i].pid);
-        }
-    }
-
-    running = ns.ps("home").filter(p => p.filename === script);
-
-    if (running.length === 0) {
-        const pid = ns.exec(script, "home", 1, ...desiredArgs);
-        if (pid === 0) {
-            ns.print(`[orchestrator] FAILED to start ${script} ${desiredArgs.join(" ")}`);
-        }
-        return;
-    }
-
-    const proc = running[0];
-    if (!sameArgs(proc.args, desiredArgs)) {
-        ns.kill(proc.pid);
-        const pid = ns.exec(script, "home", 1, ...desiredArgs);
-        if (pid === 0) {
-            ns.print(`[orchestrator] FAILED to restart ${script} ${desiredArgs.join(" ")}`);
-        }
-    }
-}
-
 function startIfMissing(ns, script, args) {
     if (!ns.fileExists(script, "home")) return;
 
     const running = ns.ps("home").filter(p => p.filename === script);
     if (running.length > 0) return;
 
-    const pid = ns.exec(script, "home", 1, ...args);
-    if (pid === 0) {
-        ns.print(`[orchestrator] FAILED to start ${script} ${args.join(" ")}`);
-    }
+    ns.exec(script, "home", 1, ...args);
 }
 
 function stopAllByScript(ns, script) {
-    const running = ns.ps("home").filter(p => p.filename === script);
-    for (const proc of running) {
-        ns.kill(proc.pid);
+    for (const proc of ns.ps("home")) {
+        if (proc.filename === script) {
+            ns.kill(proc.pid);
+        }
     }
 }
 
 function sameArgs(actual, desired) {
     if (actual.length !== desired.length) return false;
-
     for (let i = 0; i < actual.length; i++) {
         if (String(actual[i]) !== String(desired[i])) return false;
     }
-
     return true;
 }
